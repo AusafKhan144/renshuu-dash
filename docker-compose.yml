@@ -1,0 +1,35 @@
+# One-command run: `docker compose up --build`
+# - `frontend` builds the SPA and publishes it into a shared volume.
+# - `backend` serves the API + that SPA at http://localhost:8000 and runs the poller.
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    volumes:
+      - spa:/shared
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      RENSHU_DB_PATH: /data/renshuu_progress.db
+      RENSHU_FRONTEND_DIST: /app/frontend/dist
+      # Optional: pre-seed instead of using the in-app wizard.
+      # RENSHUU_API_KEY: ${RENSHUU_API_KEY:-}
+      # GOOGLE_CHAT_WEBHOOK: ${GOOGLE_CHAT_WEBHOOK:-}
+    volumes:
+      # DB persists on the host (./data on your machine) so it survives container
+      # death, rebuilds, and `docker compose down -v`. Back it up by copying this
+      # folder. To use a Docker-managed volume instead, swap for `data:/data`.
+      - ./data:/data
+      - spa:/app/frontend/dist
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+volumes:
+  spa:

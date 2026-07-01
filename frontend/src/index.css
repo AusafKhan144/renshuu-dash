@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* Semantic color tokens, mapped to Tailwind utilities (text-fg, bg-card,
+   border-fg/10, etc.). The actual values switch with the theme below, so the
+   same utility classes work in both light and dark mode. */
+@theme {
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-card: var(--card);
+  --color-bg: var(--bg);
+}
+
+/* Dark theme (default). */
+:root {
+  color-scheme: dark;
+  --fg: #e5e7eb;
+  --fg-muted: #94a3b8;
+  --bg: #0b0f1a;
+  --card: #0f172a;
+
+  /* recharts / chart colors */
+  --chart-axis: #94a3b8;
+  --chart-grid: rgba(255, 255, 255, 0.08);
+  --chart-accent: #38bdf8;
+  --chart-accent-2: #a78bfa;
+  --tooltip-bg: #0f172a;
+  --tooltip-border: rgba(255, 255, 255, 0.1);
+
+  /* app-bg gradient wash tints */
+  --wash-1: rgba(236, 72, 153, 0.12);
+  --wash-2: rgba(56, 189, 248, 0.12);
+}
+
+/* Light theme. */
+html.light {
+  color-scheme: light;
+  --fg: #0f172a;
+  --fg-muted: #64748b;
+  --bg: #f1f5f9;
+  --card: #ffffff;
+
+  --chart-axis: #64748b;
+  --chart-grid: rgba(0, 0, 0, 0.08);
+  --chart-accent: #0284c7;
+  --chart-accent-2: #7c3aed;
+  --tooltip-bg: #ffffff;
+  --tooltip-border: rgba(0, 0, 0, 0.1);
+
+  --wash-1: rgba(236, 72, 153, 0.10);
+  --wash-2: rgba(56, 189, 248, 0.14);
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Hiragino Sans", "Noto Sans JP", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* Subtle gradient backdrop for the app shell. */
+.app-bg {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, var(--wash-1), transparent),
+    radial-gradient(1000px 500px at 0% 10%, var(--wash-2), transparent),
+    var(--bg);
+}

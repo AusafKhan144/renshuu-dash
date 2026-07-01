@@ -1,0 +1,11 @@
+# Railway build/deploy config. Pins the Dockerfile builder so Railway uses the
+# single-image build above (not Nixpacks). Persistence + secrets are set in the
+# Railway dashboard, not here:
+#   - Attach a Volume mounted at /data  (so SQLite snapshot history survives deploys)
+#   - Variables: APP_PASSWORD (required), APP_SECRET, RENSHU_DB_PATH=/data/renshuu_progress.db
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "always"

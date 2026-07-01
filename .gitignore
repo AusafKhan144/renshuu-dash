@@ -1,0 +1,23 @@
+# Secrets & local data
+.env
+*.db
+backend/renshuu_progress.db
+renshuu_import_failed.csv
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/tsconfig.tsbuildinfo
+*.local
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
