@@ -3,6 +3,7 @@
    app shell and handles Web Push: shows the review reminder and, on tap, opens
    the Renshuu review queue. Excluded from the app tsconfig; vite-plugin-pwa
    compiles it on its own. */
+import { clientsClaim } from "workbox-core";
 import { precacheAndRoute } from "workbox-precaching";
 
 declare const self: ServiceWorkerGlobalScope & {
@@ -10,6 +11,12 @@ declare const self: ServiceWorkerGlobalScope & {
 };
 
 precacheAndRoute(self.__WB_MANIFEST || []);
+
+// injectManifest doesn't add these for us (unlike generateSW). Without them a new
+// worker sits "waiting" until every tab closes — which for an installed PWA never
+// happens — so updates never apply. Activate immediately and take over open tabs.
+self.skipWaiting();
+clientsClaim();
 
 self.addEventListener("push", (event: PushEvent) => {
   let payload: { title?: string; body?: string; url?: string } = {};
