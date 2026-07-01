@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.serialization import (
     PrivateFormat,
     PublicFormat,
 )
+from py_vapid import Vapid
 from pywebpush import WebPushException, webpush
 
 import db
@@ -86,6 +87,9 @@ def send_push(title: str, body: str, url: str, kind: str = "manual") -> bool:
         return False
 
     priv_pem, _ = _ensure_keys()
+    # pywebpush hands a private-key *string* to Vapid.from_string(), which only
+    # understands raw/DER base64 — not PEM armor. Pass a Vapid instance instead.
+    vapid = Vapid.from_pem(priv_pem.encode())
     payload = json.dumps({"title": title, "body": body, "url": url})
     sent = 0
     for s in subs:
@@ -97,7 +101,7 @@ def send_push(title: str, body: str, url: str, kind: str = "manual") -> bool:
             webpush(
                 subscription_info=subscription_info,
                 data=payload,
-                vapid_private_key=priv_pem,
+                vapid_private_key=vapid,
                 vapid_claims={"sub": VAPID_SUBJECT},
                 timeout=15,
             )
