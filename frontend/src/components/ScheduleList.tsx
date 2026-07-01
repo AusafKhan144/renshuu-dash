@@ -1,47 +1,37 @@
-import { CheckCircle2, Clock, Sparkles } from "lucide-react";
 import type { SchedulesResponse } from "../api/client";
 import { Card } from "./ui";
 
 export function ScheduleList({ data }: { data: SchedulesResponse }) {
   return (
-    <Card delay={0.25} className="lg:col-span-2">
-      <h3 className="text-sm font-semibold text-fg/80">Your schedules</h3>
-      <div className="mt-3 space-y-2">
+    <Card delay={0.24}>
+      <div className="mb-3 text-[13px] font-bold">Your schedules</div>
+      <div className="flex flex-col gap-2">
         {data.schedules.map((s) => {
           const total = s.terms?.total_count ?? 0;
           const studied = s.terms?.studied_count ?? 0;
           const pct = total ? Math.round((studied / total) * 100) : 0;
           return (
-            <div
-              key={s.id}
-              className="rounded-xl border border-fg/5 bg-black/20 p-3"
-            >
+            <div key={s.id} className="rounded-[14px] bg-inset p-3.5">
               <div className="flex items-center justify-between">
-                <span className="font-medium">{s.name}</span>
-                <span className="flex items-center gap-2 text-xs">
+                <span className="text-[13px] font-semibold">{s.name}</span>
+                <span className="flex items-center gap-3 text-[11.5px] font-bold">
                   {s.new_available > 0 && (
-                    <span className="flex items-center gap-1 text-sky-300">
-                      <Sparkles size={14} /> +{s.new_available} new
-                    </span>
+                    <span className="text-teal">+{s.new_available} new</span>
                   )}
                   {s.review_due > 0 ? (
-                    <span className="flex items-center gap-1 text-orange-300">
-                      <Clock size={14} /> {s.review_due} due
-                    </span>
+                    <span className="text-amber">{s.review_due} due</span>
                   ) : (
-                    <span className="flex items-center gap-1 text-emerald-400">
-                      <CheckCircle2 size={14} /> done
-                    </span>
+                    <span className="text-success">done</span>
                   )}
                 </span>
               </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-fg/10">
+              <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-card-border-strong">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-sky-500 to-violet-500"
+                  className="h-full rounded-full bg-amber"
                   style={{ width: `${pct}%` }}
                 />
               </div>
-              <div className="mt-1 text-xs text-fg/50">
+              <div className="mt-1.5 text-[11px] text-fg-faint">
                 {studied}/{total} terms · {s.booktype}
               </div>
             </div>

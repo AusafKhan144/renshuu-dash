@@ -62,11 +62,32 @@ def init_db():
                 ok      INTEGER
             );
 
+            -- Earned/claimed state for gamification achievements. Rows only
+            -- exist for achievements the user has earned; claimed_at is set once
+            -- they tap "Claim" (which fires the celebration in the UI).
+            CREATE TABLE IF NOT EXISTS achievements (
+                id         TEXT PRIMARY KEY,
+                earned_at  TEXT,
+                claimed_at TEXT
+            );
+
+            -- Web Push subscriptions (one row per browser/device that opted in).
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                endpoint   TEXT PRIMARY KEY,
+                p256dh     TEXT NOT NULL,
+                auth       TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_profile_ts ON profile_snapshots(ts);
             CREATE INDEX IF NOT EXISTS idx_schedule_ts ON schedule_snapshots(ts);
             CREATE INDEX IF NOT EXISTS idx_notif_ts ON notifications_log(ts);
             """
         )
+        # Lightweight column migration: add adventure_level to existing DBs.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(profile_snapshots)")}
+        if "adventure_level" not in cols:
+            c.execute("ALTER TABLE profile_snapshots ADD COLUMN adventure_level INTEGER")
 
 
 def _now() -> str:
@@ -98,8 +119,8 @@ def insert_profile_snapshot(profile: dict):
         c.execute(
             """INSERT INTO profile_snapshots
                (ts, total, total_vocab, total_kanji, total_grammar, total_sent,
-                streak_json, level_percs_json)
-               VALUES (?,?,?,?,?,?,?,?)""",
+                streak_json, level_percs_json, adventure_level)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
             (
                 _now(),
                 studied.get("total"),
@@ -109,6 +130,7 @@ def insert_profile_snapshot(profile: dict):
                 studied.get("total_sent"),
                 json.dumps(profile.get("streaks", {})),
                 json.dumps(profile.get("level_progress_percs", {})),
+                profile.get("adventure_level"),
             ),
         )
 
@@ -209,6 +231,17 @@ def daily_activity(days: int):
     return out
 
 
+def latest_total_review_due() -> int:
+    """Sum of review_due from the most recent snapshot of each schedule."""
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT review_due FROM schedule_snapshots s
+               WHERE ts = (SELECT MAX(ts) FROM schedule_snapshots
+                           WHERE schedule_id = s.schedule_id)"""
+        ).fetchall()
+        return sum((r["review_due"] or 0) for r in rows)
+
+
 def latest_profile_snapshot():
     with _conn() as c:
         row = c.execute(
@@ -246,3 +279,76 @@ def notified_today(kind: str) -> bool:
             (kind,),
         ).fetchone()
         return row is not None
+
+
+# --- achievements ---------------------------------------------------------
+
+def earned_achievements() -> dict:
+    """Map of achievement id -> {earned_at, claimed_at} for earned achievements."""
+    with _conn() as c:
+        rows = c.execute("SELECT id, earned_at, claimed_at FROM achievements").fetchall()
+        return {r["id"]: {"earned_at": r["earned_at"], "claimed_at": r["claimed_at"]} for r in rows}
+
+
+def mark_earned(achievement_id: str):
+    """Record an achievement as earned (no-op if already recorded)."""
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO achievements(id, earned_at) VALUES(?, ?) "
+            "ON CONFLICT(id) DO NOTHING",
+            (achievement_id, _now()),
+        )
+
+
+def mark_claimed(achievement_id: str) -> bool:
+    """Mark an earned achievement as claimed. Returns False if not yet earned."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT 1 FROM achievements WHERE id = ?", (achievement_id,)
+        ).fetchone()
+        if not row:
+            return False
+        c.execute(
+            "UPDATE achievements SET claimed_at = ? WHERE id = ? AND claimed_at IS NULL",
+            (_now(), achievement_id),
+        )
+        return True
+
+
+def learned_today() -> int:
+    """Terms learned so far today (UTC), from the schedule-snapshot diff."""
+    for p in reversed(daily_activity(1)):
+        if p["day"] == datetime.now(timezone.utc).date().isoformat():
+            return p["learned"]
+    return 0
+
+
+# --- push subscriptions ---------------------------------------------------
+
+def save_push_subscription(endpoint: str, p256dh: str, auth: str):
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO push_subscriptions(endpoint, p256dh, auth, created_at) "
+            "VALUES(?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET "
+            "p256dh = excluded.p256dh, auth = excluded.auth",
+            (endpoint, p256dh, auth, _now()),
+        )
+
+
+def list_push_subscriptions() -> list:
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT endpoint, p256dh, auth FROM push_subscriptions"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_push_subscription(endpoint: str):
+    with _conn() as c:
+        c.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+
+
+def count_push_subscriptions() -> int:
+    with _conn() as c:
+        row = c.execute("SELECT COUNT(*) AS n FROM push_subscriptions").fetchone()
+        return row["n"] if row else 0

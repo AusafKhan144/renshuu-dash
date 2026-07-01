@@ -4,15 +4,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { KeyRound, Bell, CheckCircle2, Loader2, ExternalLink } from "lucide-react";
 import { api } from "../api/client";
-import { Card } from "../components/ui";
+import { enablePush, pushSupported } from "../push";
 
 export function SetupWizard() {
   const qc = useQueryClient();
   const [apiKey, setApiKey] = useState("");
-  const [webhook, setWebhook] = useState("");
   const [account, setAccount] = useState<{ name?: string } | null>(null);
   const [validating, setValidating] = useState(false);
-  const [savingHook, setSavingHook] = useState(false);
+  const [pushOn, setPushOn] = useState(false);
+  const [enabling, setEnabling] = useState(false);
 
   async function saveKey() {
     setValidating(true);
@@ -27,16 +27,17 @@ export function SetupWizard() {
     }
   }
 
-  async function saveWebhook() {
-    setSavingHook(true);
+  async function turnOnPush() {
+    setEnabling(true);
     try {
-      await api.post("/setup/webhook", { webhook: webhook.trim() });
-      await api.post("/setup/test-notify");
-      toast.success("Test message sent — check Google Chat!");
-    } catch {
-      toast.error("Couldn't send a test message. Is the webhook URL correct?");
+      await enablePush();
+      await api.post("/push/test");
+      setPushOn(true);
+      toast.success("Notifications on — sent you a test.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Couldn't enable notifications.");
     } finally {
-      setSavingHook(false);
+      setEnabling(false);
     }
   }
 
@@ -45,26 +46,38 @@ export function SetupWizard() {
   }
 
   return (
-    <div className="app-bg min-h-screen flex items-center justify-center p-4">
+    <div className="app-bg flex min-h-screen items-center justify-center p-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.97 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="w-full max-w-lg"
+        className="w-full max-w-md"
       >
-        <div className="mb-6 text-center">
-          <div className="text-4xl font-bold tracking-tight">練習</div>
-          <p className="mt-1 text-fg/60">Your personal Renshuu progress dashboard</p>
+        <div className="text-center">
+          <div className="font-display text-[32px] font-bold">練習</div>
+          <div className="mt-1.5 text-sm text-fg-muted">
+            Your personal Renshuu progress dashboard
+          </div>
         </div>
 
-        <Card>
+        {/* Step dots */}
+        <div className="my-4 flex justify-center gap-1.5">
+          <span className="h-[5px] w-6 rounded-full bg-amber" />
+          <span
+            className={
+              "h-[5px] w-6 rounded-full " + (account ? "bg-rose" : "bg-card-border-strong")
+            }
+          />
+        </div>
+
+        <div className="rounded-[18px] border border-card-border bg-card p-5 card-shadow">
           {/* Step 1: API key */}
-          <div className="flex items-center gap-2 text-sm font-semibold text-sky-300">
-            <KeyRound size={16} /> Step 1 · Connect your Renshuu account
+          <div className="flex items-center gap-2 text-[12.5px] font-bold text-amber">
+            <KeyRound size={15} /> Step 1 · Connect your Renshuu account
           </div>
-          <p className="mt-2 text-sm text-fg/60">
+          <p className="mt-2 text-sm leading-relaxed text-fg-muted">
             Get a read API key from{" "}
             <a
-              className="text-sky-400 underline"
+              className="text-amber underline"
               href="https://www.renshuu.org/index.php?page=api"
               target="_blank"
               rel="noreferrer"
@@ -79,54 +92,59 @@ export function SetupWizard() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="Paste your Renshuu API key"
-              className="flex-1 rounded-lg border border-fg/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-sky-400"
+              className="min-w-0 flex-1 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm outline-none focus:border-amber"
             />
             <button
               onClick={saveKey}
               disabled={!apiKey.trim() || validating}
-              className="rounded-lg bg-sky-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+              className="rounded-[10px] bg-amber px-4 py-2 text-sm font-bold text-bg disabled:opacity-40"
             >
               {validating ? <Loader2 size={16} className="animate-spin" /> : "Connect"}
             </button>
           </div>
           {account && (
-            <div className="mt-2 flex items-center gap-2 text-sm text-emerald-400">
+            <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-success">
               <CheckCircle2 size={16} /> Connected as {account.name}
             </div>
           )}
 
-          {/* Step 2: webhook (optional) */}
-          <div className="mt-6 flex items-center gap-2 text-sm font-semibold text-pink-300">
-            <Bell size={16} /> Step 2 · Phone reminders via Google Chat (optional)
+          {/* Step 2: notifications (optional) */}
+          <div className="mt-6 flex items-center gap-2 text-[12.5px] font-bold text-rose">
+            <Bell size={15} /> Step 2 · Phone reminders (optional)
           </div>
-          <p className="mt-2 text-sm text-fg/60">
-            In a Google Chat space: <em>Apps &amp; integrations → Webhooks → Create</em>,
-            then paste the URL here.
+          <p className="mt-2 text-sm leading-relaxed text-fg-muted">
+            Install this dashboard to your home screen, then enable notifications to
+            get a nudge when reviews are due — even when the app is closed.
           </p>
-          <div className="mt-3 flex gap-2">
-            <input
-              value={webhook}
-              onChange={(e) => setWebhook(e.target.value)}
-              placeholder="https://chat.googleapis.com/v1/spaces/..."
-              className="flex-1 rounded-lg border border-fg/10 bg-black/30 px-3 py-2 text-sm outline-none focus:border-pink-400"
-            />
-            <button
-              onClick={saveWebhook}
-              disabled={!webhook.trim() || savingHook || !account}
-              className="rounded-lg bg-pink-500 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-            >
-              {savingHook ? <Loader2 size={16} className="animate-spin" /> : "Test"}
-            </button>
+          <div className="mt-3">
+            {!pushSupported() ? (
+              <p className="text-sm text-fg-faint">
+                Add the app to your home screen first (iOS 16.4+), then enable
+                notifications from Settings.
+              </p>
+            ) : pushOn ? (
+              <div className="flex items-center gap-2 text-sm font-semibold text-success">
+                <CheckCircle2 size={16} /> Notifications enabled
+              </div>
+            ) : (
+              <button
+                onClick={turnOnPush}
+                disabled={!account || enabling}
+                className="rounded-[10px] bg-rose px-4 py-2 text-sm font-bold text-bg disabled:opacity-40"
+              >
+                {enabling ? <Loader2 size={16} className="animate-spin" /> : "Enable notifications"}
+              </button>
+            )}
           </div>
 
           <button
             onClick={finish}
             disabled={!account}
-            className="mt-6 w-full rounded-lg bg-fg/10 py-2.5 text-sm font-semibold hover:bg-fg/15 disabled:opacity-40"
+            className="mt-6 w-full rounded-[10px] bg-amber py-3 text-sm font-bold text-bg disabled:opacity-40"
           >
             {account ? "Open my dashboard →" : "Connect your account to continue"}
           </button>
-        </Card>
+        </div>
       </motion.div>
     </div>
   );

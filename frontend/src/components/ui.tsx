@@ -18,8 +18,7 @@ export function Card({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay }}
       className={clsx(
-        "rounded-2xl border border-fg/10 bg-fg/[0.04] p-5 backdrop-blur",
-        "shadow-[0_8px_30px_rgba(0,0,0,0.25)]",
+        "rounded-[18px] border border-card-border bg-card p-5",
         className
       )}
     >
@@ -48,7 +47,7 @@ export function AnimatedNumber({ value }: { value: number | null | undefined }) 
     return () => cancelAnimationFrame(raf);
   }, [target]);
 
-  if (value == null) return <span className="text-fg/40">—</span>;
+  if (value == null) return <span className="text-fg-faint">—</span>;
   return <span>{display.toLocaleString()}</span>;
 }
 
@@ -58,8 +57,8 @@ export function Delta({ value }: { value: number | null | undefined }) {
   return (
     <span
       className={clsx(
-        "ml-2 text-sm font-medium",
-        up ? "text-emerald-400" : "text-rose-400"
+        "text-xs font-semibold",
+        up ? "text-success" : "text-rose"
       )}
     >
       {up ? "+" : ""}

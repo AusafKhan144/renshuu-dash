@@ -1,4 +1,4 @@
-"""Runtime settings: the Renshuu API key and Google Chat webhook.
+"""Runtime settings: the Renshuu API key and the daily study goal.
 
 Stored server-side in the SQLite settings table (set via the in-app wizard).
 On a self-hosted single-user instance this is the user's own machine, so the
@@ -15,27 +15,35 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from renshuu_client import validate_key  # noqa: E402
 
 import db  # noqa: E402
-from config import ENV_API_KEY, ENV_WEBHOOK  # noqa: E402
+from config import ENV_API_KEY  # noqa: E402
 
 KEY_SETTING = "renshuu_api_key"
-WEBHOOK_SETTING = "google_chat_webhook"
 ACCOUNT_NAME_SETTING = "renshuu_account_name"
+DAILY_GOAL_SETTING = "daily_goal"
+DEFAULT_DAILY_GOAL = 30
 
 
 def bootstrap_from_env():
     """Seed settings from env vars if present and not already configured."""
     if ENV_API_KEY and not db.get_setting(KEY_SETTING):
         db.set_setting(KEY_SETTING, ENV_API_KEY.strip().strip("\"'"))
-    if ENV_WEBHOOK and not db.get_setting(WEBHOOK_SETTING):
-        db.set_setting(WEBHOOK_SETTING, ENV_WEBHOOK.strip().strip("\"'"))
 
 
 def get_api_key():
     return db.get_setting(KEY_SETTING)
 
 
-def get_webhook():
-    return db.get_setting(WEBHOOK_SETTING)
+def get_daily_goal() -> int:
+    raw = db.get_setting(DAILY_GOAL_SETTING)
+    try:
+        return int(raw) if raw is not None else DEFAULT_DAILY_GOAL
+    except (TypeError, ValueError):
+        return DEFAULT_DAILY_GOAL
+
+
+def set_daily_goal(goal: int):
+    goal = max(1, min(500, int(goal)))
+    db.set_setting(DAILY_GOAL_SETTING, str(goal))
 
 
 def is_configured() -> bool:
@@ -54,10 +62,6 @@ def save_api_key(api_key: str):
     if profile.get("real_name"):
         db.set_setting(ACCOUNT_NAME_SETTING, profile["real_name"])
     return True, profile
-
-
-def save_webhook(webhook: str):
-    db.set_setting(WEBHOOK_SETTING, (webhook or "").strip())
 
 
 def account_summary():

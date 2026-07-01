@@ -9,14 +9,19 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      // Custom service worker (src/sw.ts) so we can receive Web Push. injectManifest
+      // hands us the precache list via self.__WB_MANIFEST.
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       registerType: "autoUpdate",
       includeAssets: ["apple-touch-icon.png"],
       manifest: {
         name: "練習 · Renshuu Dashboard",
         short_name: "練習",
         description: "Your personal Renshuu Japanese progress dashboard",
-        theme_color: "#0b0f1a",
-        background_color: "#0b0f1a",
+        theme_color: "#141210",
+        background_color: "#141210",
         display: "standalone",
         start_url: "/",
         icons: [
@@ -30,11 +35,9 @@ export default defineConfig({
           },
         ],
       },
-      workbox: {
-        // Precache only the static app shell — never the live /api responses,
-        // so data stays fresh and isn't served stale from the cache.
+      injectManifest: {
+        // Precache only the static app shell — never the live /api responses.
         globPatterns: ["**/*.{js,css,html,svg,png,woff2}"],
-        navigateFallbackDenylist: [/^\/api/],
       },
     }),
   ],

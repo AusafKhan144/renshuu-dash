@@ -20,7 +20,7 @@ services:
       RENSHU_FRONTEND_DIST: /app/frontend/dist
       # Optional: pre-seed instead of using the in-app wizard.
       # RENSHUU_API_KEY: ${RENSHUU_API_KEY:-}
-      # GOOGLE_CHAT_WEBHOOK: ${GOOGLE_CHAT_WEBHOOK:-}
+      # VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:you@example.com}
     volumes:
       # DB persists on the host (./data on your machine) so it survives container
       # death, rebuilds, and `docker compose down -v`. Back it up by copying this

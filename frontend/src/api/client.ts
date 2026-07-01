@@ -35,7 +35,8 @@ export interface AuthStatus {
 
 export interface SetupStatus {
   configured: boolean;
-  webhook_set: boolean;
+  push_enabled: boolean;
+  daily_goal: number;
   account: { name: string | null } | null;
 }
 
@@ -56,7 +57,23 @@ export interface Overview {
   };
   streaks: Record<string, unknown>;
   jlpt: Record<string, Record<string, number>>;
+  level: number;
+  level_title: string;
+  adventure_level: number | null;
+  xp: { current: number; floor: number; next: number; pct: number };
+  daily: { goal: number; progress: number; reviews_due: number };
+  insights: string[];
   as_of: string | null;
+}
+
+export interface Achievement {
+  id: string;
+  name: string;
+  hue: "amber" | "teal" | "violet" | "rose" | "success";
+  earned: boolean;
+  fresh: boolean;
+  claimed: boolean;
+  progress: number;
 }
 
 export interface UpcomingDay {
@@ -150,4 +167,22 @@ export function useActivity(days: number, enabled: boolean) {
     queryFn: async () =>
       (await api.get<ActivityResponse>("/activity", { params: { days } })).data,
   });
+}
+
+export function useAchievements(enabled: boolean) {
+  return useQuery({
+    queryKey: ["achievements"],
+    enabled,
+    queryFn: async () =>
+      (await api.get<{ achievements: Achievement[] }>("/achievements")).data
+        .achievements,
+  });
+}
+
+export async function claimAchievement(id: string) {
+  await api.post(`/achievements/${id}/claim`);
+}
+
+export async function setDailyGoal(goal: number) {
+  await api.post("/setup/daily-goal", { goal });
 }

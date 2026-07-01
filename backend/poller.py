@@ -14,6 +14,7 @@ import logging
 from apscheduler.schedulers.background import BackgroundScheduler
 
 import db
+import gamification
 import notifier
 import settings
 from config import PROFILE_SNAPSHOT_HOUR, SCHEDULE_POLL_MINUTES
@@ -52,6 +53,12 @@ def snapshot_profile():
         return None
     profile = get_profile(api_key)
     db.insert_profile_snapshot(profile)
+    # Evaluate achievements against the fresh snapshot so newly-earned ones are
+    # recorded (and become claimable in the UI).
+    try:
+        gamification.sync_and_list(gamification.current_stats())
+    except Exception as e:  # noqa: BLE001 - achievements are best-effort
+        log.warning("Achievement evaluation failed: %s", e)
     log.info("Captured profile snapshot")
     return profile
 

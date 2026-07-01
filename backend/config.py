@@ -1,8 +1,8 @@
 """Configuration for the dashboard backend.
 
 Defaults can be overridden by environment variables (handy for Docker), but the
-Renshuu API key and Google Chat webhook are normally set at runtime via the
-in-app setup wizard and stored in the database (see settings.py).
+Renshuu API key is normally set at runtime via the in-app setup wizard and
+stored in the database (see settings.py).
 """
 
 import os
@@ -29,10 +29,15 @@ DEV_ORIGINS = os.environ.get(
     "http://localhost:5173,http://127.0.0.1:5173",
 ).split(",")
 
-# Optional bootstrap: if these env vars are set and the DB has no value yet,
-# they seed the settings table on startup (lets power users skip the wizard).
+# Optional bootstrap: if this env var is set and the DB has no value yet, it
+# seeds the settings table on startup (lets power users skip the wizard).
 ENV_API_KEY = os.environ.get("RENSHUU_API_KEY")
-ENV_WEBHOOK = os.environ.get("GOOGLE_CHAT_WEBHOOK")
+
+# --- Web Push (VAPID) ------------------------------------------------------
+# The "sub" claim sent with each push; must be a mailto: or https: URL that a
+# push service can contact about your app. VAPID keys themselves are generated
+# and stored in the DB on first use (see push.py).
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:admin@renshuu-dashboard.local")
 
 # --- Auth (for public hosting) --------------------------------------------
 # Single shared password that gates the whole app. If unset, auth is DISABLED

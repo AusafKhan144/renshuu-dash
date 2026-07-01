@@ -1,82 +1,32 @@
-"""Google Chat notifications via an incoming webhook.
+"""Review reminders, delivered as Web Push (PWA) notifications.
 
-A Chat webhook is the simplest possible push channel: POST JSON to a URL, no
-OAuth. The forker creates one in a Chat space (Apps & integrations > Webhooks)
-and pastes the URL into the setup wizard.
+The forker installs the dashboard as a PWA and enables notifications; the
+background poller calls in here once a day when reviews are due. Delivery and
+subscription handling live in push.py.
 """
 
-import requests
+import push
 
-import db
-import settings
-
-
-def _post(webhook: str, payload: dict) -> bool:
-    try:
-        resp = requests.post(webhook, json=payload, timeout=15)
-        return resp.status_code == 200
-    except requests.RequestException:
-        return False
+# Tapping a notification should take you straight to your Renshuu mistakes queue.
+REVIEW_URL = "https://www.renshuu.org/index.php?page=mistakes"
 
 
 def send_text(text: str, kind: str = "manual") -> bool:
-    """Send a plain-text Chat message. Returns True on success."""
-    webhook = settings.get_webhook()
-    if not webhook:
-        db.log_notification(kind, text, False)
-        return False
-    ok = _post(webhook, {"text": text})
-    db.log_notification(kind, text, ok)
-    return ok
+    """Send a simple notification to all subscribed devices."""
+    return push.send_push("練習 Renshuu Dashboard", text, REVIEW_URL, kind=kind)
 
 
 def send_review_reminder(total_due: int, schedules: list) -> bool:
-    """Rich-ish reminder that reviews are ready, with a button to open Renshuu."""
-    webhook = settings.get_webhook()
-    if not webhook:
-        db.log_notification("review", f"{total_due} reviews due", False)
-        return False
-
+    """Push a reminder that reviews are ready, with a per-schedule breakdown."""
     breakdown = ", ".join(
         f"{s['name']} ({s['review_due']})"
         for s in schedules
         if s.get("review_due", 0) > 0
     )
-    text = f"🔔 *{total_due} reviews ready on Renshuu!*\n{breakdown}"
-    card = {
-        "cardsV2": [
-            {
-                "cardId": "review-reminder",
-                "card": {
-                    "header": {
-                        "title": "Time to review! 🇯🇵",
-                        "subtitle": f"{total_due} terms waiting",
-                    },
-                    "sections": [
-                        {
-                            "widgets": [
-                                {"textParagraph": {"text": breakdown or "Reviews are due."}},
-                                {
-                                    "buttonList": {
-                                        "buttons": [
-                                            {
-                                                "text": "Open Renshuu",
-                                                "onClick": {
-                                                    "openLink": {
-                                                        "url": "https://www.renshuu.org/index.php?page=mistakes"
-                                                    }
-                                                },
-                                            }
-                                        ]
-                                    }
-                                },
-                            ]
-                        }
-                    ],
-                },
-            }
-        ]
-    }
-    ok = _post(webhook, card)
-    db.log_notification("review", text, ok)
-    return ok
+    body = breakdown or f"{total_due} terms waiting"
+    return push.send_push(
+        f"🔔 {total_due} reviews ready on Renshuu!",
+        body,
+        REVIEW_URL,
+        kind="review",
+    )

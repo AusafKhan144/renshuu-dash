@@ -21,8 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import auth  # noqa: E402
 import db  # noqa: E402
+import gamification  # noqa: E402
 import notifier  # noqa: E402
 import poller  # noqa: E402
+import push  # noqa: E402
 import settings  # noqa: E402
 from config import DEV_ORIGINS, FRONTEND_DIST  # noqa: E402
 from renshuu_client import get_schedules  # noqa: E402
@@ -61,12 +63,20 @@ class KeyIn(BaseModel):
     api_key: str
 
 
-class WebhookIn(BaseModel):
-    webhook: str
-
-
 class LoginIn(BaseModel):
     password: str
+
+
+class DailyGoalIn(BaseModel):
+    goal: int
+
+
+class PushSubscriptionIn(BaseModel):
+    subscription: dict
+
+
+class PushUnsubscribeIn(BaseModel):
+    endpoint: str
 
 
 # --- auth endpoints (unprotected) -----------------------------------------
@@ -104,7 +114,8 @@ api = APIRouter(prefix="/api", dependencies=[Depends(auth.require_auth)])
 def setup_status():
     return {
         "configured": settings.is_configured(),
-        "webhook_set": bool(settings.get_webhook()),
+        "push_enabled": push.enabled(),
+        "daily_goal": settings.get_daily_goal(),
         "account": settings.account_summary(),
     }
 
@@ -126,22 +137,42 @@ def setup_key(body: KeyIn):
     }
 
 
-@api.post("/setup/webhook")
-def setup_webhook(body: WebhookIn):
-    settings.save_webhook(body.webhook)
-    return {"ok": True, "webhook_set": bool(settings.get_webhook())}
+@api.post("/setup/daily-goal")
+def setup_daily_goal(body: DailyGoalIn):
+    settings.set_daily_goal(body.goal)
+    return {"ok": True, "daily_goal": settings.get_daily_goal()}
 
 
-@api.post("/setup/test-notify")
-def setup_test_notify():
+# --- push notifications ---------------------------------------------------
+
+@api.get("/push/vapid-key")
+def push_vapid_key():
+    return {"public_key": push.public_key()}
+
+
+@api.post("/push/subscribe")
+def push_subscribe(body: PushSubscriptionIn):
+    if not push.save_subscription(body.subscription):
+        raise HTTPException(status_code=400, detail="Invalid push subscription.")
+    return {"ok": True}
+
+
+@api.post("/push/unsubscribe")
+def push_unsubscribe(body: PushUnsubscribeIn):
+    push.remove_subscription(body.endpoint)
+    return {"ok": True}
+
+
+@api.post("/push/test")
+def push_test():
     ok = notifier.send_text(
-        "✅ Renshuu Dashboard connected! You'll get review reminders here.",
+        "✅ Notifications are on! You'll get a nudge here when reviews are due.",
         kind="test",
     )
     if not ok:
         raise HTTPException(
             status_code=400,
-            detail="Could not send. Check the webhook URL is set and correct.",
+            detail="Could not send. Enable notifications on this device first.",
         )
     return {"ok": True}
 
@@ -168,6 +199,12 @@ def overview():
             return latest[field] - week_ago[field]
         return None
 
+    stats = gamification.current_stats()
+    reviews_due = db.latest_total_review_due()
+    xp = gamification.compute_xp(stats)
+    level = gamification.level_info(xp)
+    daily_goal = settings.get_daily_goal()
+
     return {
         "totals": {
             "total": latest.get("total"),
@@ -185,8 +222,28 @@ def overview():
         },
         "streaks": _json(latest.get("streak_json")),
         "jlpt": _json(latest.get("level_percs_json")),
+        "level": level["level"],
+        "level_title": level["title"],
+        "adventure_level": latest.get("adventure_level"),
+        "xp": level["xp"],
+        "daily": {"goal": daily_goal, "progress": db.learned_today(), "reviews_due": reviews_due},
+        "insights": gamification.build_insights(stats, reviews_due),
         "as_of": latest.get("ts"),
     }
+
+
+@api.get("/achievements")
+def achievements():
+    _require_configured()
+    return {"achievements": gamification.sync_and_list(gamification.current_stats())}
+
+
+@api.post("/achievements/{achievement_id}/claim")
+def claim_achievement(achievement_id: str):
+    _require_configured()
+    if not db.mark_claimed(achievement_id):
+        raise HTTPException(status_code=404, detail="Achievement not earned yet.")
+    return {"ok": True}
 
 
 @api.get("/schedules")
