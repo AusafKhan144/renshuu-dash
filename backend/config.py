@@ -35,9 +35,11 @@ ENV_API_KEY = os.environ.get("RENSHUU_API_KEY")
 
 # --- Web Push (VAPID) ------------------------------------------------------
 # The "sub" claim sent with each push; must be a mailto: or https: URL that a
-# push service can contact about your app. VAPID keys themselves are generated
-# and stored in the DB on first use (see push.py).
-VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:admin@renshuu-dashboard.local")
+# push service can contact about your app. Apple's push gateway REJECTS invalid
+# subjects (e.g. reserved .local domains) with 403 BadJwtToken, so this must be a
+# real, routable address. VAPID keys themselves are generated and stored in the
+# DB on first use (see push.py).
+VAPID_SUBJECT = os.environ.get("VAPID_SUBJECT", "mailto:kausaf141@gmail.com")
 
 # --- Auth (for public hosting) --------------------------------------------
 # Single shared password that gates the whole app. If unset, auth is DISABLED
