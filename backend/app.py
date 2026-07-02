@@ -474,9 +474,12 @@ def activity(days: int = 30):
 
 @api.post("/refresh")
 def refresh():
+    """Full on-demand refresh: everything the daily poll captures, run now."""
     _require_configured()
     profile = poller.snapshot_profile()
     result = poller.poll_schedules(notify=False)
+    poller.snapshot_kana_mastery()
+    poller.snapshot_spotlight()
     _schedules_cache["data"] = None  # invalidate cache
     return {"ok": True, "schedules": result}
 
