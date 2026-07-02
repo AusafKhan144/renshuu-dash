@@ -53,7 +53,7 @@ export function SetupWizard() {
         className="w-full max-w-md"
       >
         <div className="text-center">
-          <div className="font-display text-[32px] font-bold">練習</div>
+          <div className="font-display text-[32px] font-bold">Renshu</div>
           <div className="mt-1.5 text-sm text-fg-muted">
             Your personal Renshuu progress dashboard
           </div>

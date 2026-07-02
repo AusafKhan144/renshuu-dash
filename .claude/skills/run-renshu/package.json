@@ -1,0 +1,9 @@
+{
+  "name": "run-renshu",
+  "private": true,
+  "description": "Playwright driver for the /run-renshu skill",
+  "type": "module",
+  "dependencies": {
+    "playwright-core": "^1.61.1"
+  }
+}

@@ -79,15 +79,51 @@ def init_db():
                 created_at TEXT NOT NULL
             );
 
+            -- Renshuu's own daily usage counter (single row, overwritten on
+            -- every capture from a live response's api_usage field).
+            CREATE TABLE IF NOT EXISTS api_usage (
+                id             INTEGER PRIMARY KEY CHECK (id = 1),
+                calls_today    INTEGER,
+                daily_allowance INTEGER,
+                ts             TEXT NOT NULL
+            );
+
+            -- A handful of vocab terms captured during the daily poll, shown
+            -- as "Word Spotlight" on the dashboard (no live call per page load).
+            CREATE TABLE IF NOT EXISTS spotlight (
+                day          TEXT NOT NULL,
+                word_id      TEXT,
+                kanji_full   TEXT,
+                hiragana_full TEXT,
+                def          TEXT,
+                mastery      INTEGER
+            );
+
+            -- Per-kana/kanji mastery captured during the daily poll (hiragana/
+            -- katakana/kanji schedules), for the read-only Kana Mastery grid.
+            CREATE TABLE IF NOT EXISTS kana_mastery (
+                day     TEXT NOT NULL,
+                section TEXT NOT NULL,
+                char    TEXT NOT NULL,
+                score   INTEGER,
+                detail  TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_profile_ts ON profile_snapshots(ts);
             CREATE INDEX IF NOT EXISTS idx_schedule_ts ON schedule_snapshots(ts);
             CREATE INDEX IF NOT EXISTS idx_notif_ts ON notifications_log(ts);
+            CREATE INDEX IF NOT EXISTS idx_spotlight_day ON spotlight(day);
+            CREATE INDEX IF NOT EXISTS idx_kana_mastery_day ON kana_mastery(day, section);
             """
         )
         # Lightweight column migration: add adventure_level to existing DBs.
         cols = {r["name"] for r in c.execute("PRAGMA table_info(profile_snapshots)")}
         if "adventure_level" not in cols:
             c.execute("ALTER TABLE profile_snapshots ADD COLUMN adventure_level INTEGER")
+        # Lightweight column migration: add detail to existing kana_mastery tables.
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(kana_mastery)")}
+        if "detail" not in cols:
+            c.execute("ALTER TABLE kana_mastery ADD COLUMN detail TEXT")
 
 
 def _now() -> str:
@@ -352,3 +388,108 @@ def count_push_subscriptions() -> int:
     with _conn() as c:
         row = c.execute("SELECT COUNT(*) AS n FROM push_subscriptions").fetchone()
         return row["n"] if row else 0
+
+
+# --- api usage --------------------------------------------------------------
+
+def upsert_api_usage(calls_today: int, daily_allowance: int):
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO api_usage(id, calls_today, daily_allowance, ts) VALUES(1, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET calls_today = excluded.calls_today, "
+            "daily_allowance = excluded.daily_allowance, ts = excluded.ts",
+            (calls_today, daily_allowance, _now()),
+        )
+
+
+def latest_api_usage():
+    with _conn() as c:
+        row = c.execute(
+            "SELECT calls_today, daily_allowance, ts FROM api_usage WHERE id = 1"
+        ).fetchone()
+        return dict(row) if row else None
+
+
+# --- spotlight ---------------------------------------------------------------
+
+def replace_spotlight(words: list):
+    """Overwrite today's spotlight words (called once per daily poll)."""
+    day = datetime.now(timezone.utc).date().isoformat()
+    with _conn() as c:
+        c.execute("DELETE FROM spotlight WHERE day = ?", (day,))
+        c.executemany(
+            "INSERT INTO spotlight(day, word_id, kanji_full, hiragana_full, def, mastery) "
+            "VALUES (?,?,?,?,?,?)",
+            [
+                (day, w.get("word_id"), w.get("kanji_full"), w.get("hiragana_full"),
+                 w.get("def"), w.get("mastery"))
+                for w in words
+            ],
+        )
+
+
+def latest_spotlight() -> list:
+    with _conn() as c:
+        row = c.execute("SELECT MAX(day) AS day FROM spotlight").fetchone()
+        if not row or not row["day"]:
+            return []
+        rows = c.execute(
+            "SELECT word_id, kanji_full, hiragana_full, def, mastery "
+            "FROM spotlight WHERE day = ?",
+            (row["day"],),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# --- kana mastery -------------------------------------------------------------
+
+def replace_kana_mastery(section: str, rows: list):
+    """Overwrite today's mastery rows for one section (hiragana/katakana/kanji)."""
+    day = datetime.now(timezone.utc).date().isoformat()
+    with _conn() as c:
+        c.execute("DELETE FROM kana_mastery WHERE day = ? AND section = ?", (day, section))
+        c.executemany(
+            "INSERT INTO kana_mastery(day, section, char, score, detail) VALUES (?,?,?,?,?)",
+            [
+                (day, section, r["char"], r["score"], json.dumps(r["detail"]) if r.get("detail") else None)
+                for r in rows
+            ],
+        )
+
+
+def latest_kana_mastery() -> dict:
+    """{section: {char: {"score": int, "detail": dict|None}}} from the most recent captured day."""
+    with _conn() as c:
+        row = c.execute("SELECT MAX(day) AS day FROM kana_mastery").fetchone()
+        if not row or not row["day"]:
+            return {}
+        rows = c.execute(
+            "SELECT section, char, score, detail FROM kana_mastery WHERE day = ?",
+            (row["day"],),
+        ).fetchall()
+        out: dict = {}
+        for r in rows:
+            out.setdefault(r["section"], {})[r["char"]] = {
+                "score": r["score"],
+                "detail": json.loads(r["detail"]) if r["detail"] else None,
+            }
+        return out
+
+
+def kana_mastery_n_days_ago(days: int) -> dict:
+    """{section: {char: score}} from the closest captured day >= `days` ago."""
+    with _conn() as c:
+        row = c.execute(
+            "SELECT MAX(day) AS day FROM kana_mastery WHERE day <= date('now', ?)",
+            (f"-{int(days)} days",),
+        ).fetchone()
+        if not row or not row["day"]:
+            return {}
+        rows = c.execute(
+            "SELECT section, char, score FROM kana_mastery WHERE day = ?",
+            (row["day"],),
+        ).fetchall()
+        out: dict = {}
+        for r in rows:
+            out.setdefault(r["section"], {})[r["char"]] = r["score"]
+        return out

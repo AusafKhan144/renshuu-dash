@@ -10,6 +10,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Cookie, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,7 +28,16 @@ import poller  # noqa: E402
 import push  # noqa: E402
 import settings  # noqa: E402
 from config import DEV_ORIGINS, FRONTEND_DIST  # noqa: E402
-from renshuu_client import get_schedules  # noqa: E402
+from renshuu_client import (  # noqa: E402
+    add_word_to_list,
+    get_list_words,
+    get_lists,
+    get_schedules,
+    remove_word_from_list,
+    search_grammar,
+    search_kanji,
+    search_word,
+)
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("renshu.app")
@@ -35,6 +45,25 @@ log = logging.getLogger("renshu.app")
 # Tiny in-memory cache for the live /schedules call (avoid hammering the API).
 _schedules_cache = {"at": 0.0, "data": None}
 SCHEDULES_TTL = 300  # 5 min
+
+# Same pattern, generalized, for the lists index/detail lookups below.
+_cache: dict = {}
+CACHE_TTL = 300  # 5 min
+
+
+def _cached(key: str, compute):
+    now = time.time()
+    entry = _cache.get(key)
+    if entry and now - entry["at"] < CACHE_TTL:
+        return entry["data"]
+    data = compute()
+    _cache[key] = {"at": now, "data": data}
+    return data
+
+
+def _invalidate_cache(prefix: str):
+    for k in [k for k in _cache if k.startswith(prefix)]:
+        del _cache[k]
 
 
 @asynccontextmanager
@@ -206,6 +235,7 @@ def overview():
     daily_goal = settings.get_daily_goal()
 
     return {
+        "account_name": (settings.account_summary() or {}).get("name"),
         "totals": {
             "total": latest.get("total"),
             "vocab": latest.get("total_vocab"),
@@ -270,6 +300,155 @@ def schedules():
     data["total_review_due"] = sum(s["review_due"] for s in data["schedules"])
     _schedules_cache.update(at=now, data=data)
     return data
+
+
+@api.get("/lookup")
+def lookup(type: Literal["word", "kanji", "grammar"], q: str):
+    """On-demand dictionary search (live Renshuu call — advances daily usage)."""
+    _require_configured()
+    q = q.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q is required.")
+    api_key = settings.get_api_key()
+
+    if type == "word":
+        word, note = search_word(api_key, q)
+        return {"type": "word", "found": word is not None, "word": word, "note": note}
+
+    if type == "kanji":
+        data, err = search_kanji(api_key, q)
+        if data is None:
+            return {"type": "kanji", "found": False, "available": False, "error": err}
+        kanjis = data.get("kanjis", [])
+        return {"type": "kanji", "found": bool(kanjis), "available": True, "kanjis": kanjis}
+
+    data, err = search_grammar(api_key, q)
+    if data is None:
+        return {"type": "grammar", "found": False, "available": False, "error": err}
+    grammar = data.get("grammar", [])
+    return {"type": "grammar", "found": bool(grammar), "available": True, "grammar": grammar}
+
+
+@api.get("/lists")
+def lists_index():
+    _require_configured()
+
+    def compute():
+        raw = get_lists(settings.get_api_key())
+        out = []
+        for tg in raw.get("termtype_groups", []):
+            for g in tg.get("groups", []):
+                for entry in g.get("lists", []):
+                    out.append({
+                        "id": entry.get("list_id"),
+                        "title": entry.get("title"),
+                        "termtype": entry.get("termtype"),
+                        "description": entry.get("description"),
+                        "privacy": entry.get("privacy"),
+                    })
+        return {"lists": out}
+
+    return _cached("lists", compute)
+
+
+@api.get("/lists/{list_id}")
+def list_detail(list_id: str, page: int = 1):
+    _require_configured()
+
+    def compute():
+        data, err = get_list_words(settings.get_api_key(), list_id, page)
+        if err:
+            raise HTTPException(status_code=502, detail=f"Renshuu list lookup failed: {err}")
+        contents = data.get("contents", {}) or {}
+        words = [
+            {
+                "id": t.get("id"),
+                "kanji_full": t.get("kanji_full"),
+                "hiragana_full": t.get("hiragana_full"),
+                "def": t.get("def"),
+                "mastery": int(float((t.get("user_data") or {}).get("mastery_avg_perc") or 0)),
+            }
+            for t in contents.get("terms", []) or []
+        ]
+        return {
+            "id": list_id,
+            "title": data.get("title"),
+            "termtype": data.get("termtype"),
+            "page": contents.get("pg", page),
+            "total_pages": contents.get("total_pg", 1),
+            "words": words,
+        }
+
+    return _cached(f"list:{list_id}:{page}", compute)
+
+
+class SaveWordIn(BaseModel):
+    word_id: str
+
+
+@api.post("/lists/{list_id}/words")
+def save_word(list_id: str, body: SaveWordIn):
+    _require_configured()
+    ok, status = add_word_to_list(settings.get_api_key(), body.word_id, list_id)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"Renshuu rejected the save (HTTP {status}).")
+    _invalidate_cache(f"list:{list_id}")
+    _invalidate_cache("lists")
+    return {"ok": True}
+
+
+@api.delete("/lists/{list_id}/words/{word_id}")
+def delete_word(list_id: str, word_id: str):
+    _require_configured()
+    ok, status = remove_word_from_list(settings.get_api_key(), word_id, list_id)
+    if not ok:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Renshuu couldn't remove that word (HTTP {status}). It may not support removal.",
+        )
+    _invalidate_cache(f"list:{list_id}")
+    _invalidate_cache("lists")
+    return {"ok": True}
+
+
+@api.get("/spotlight")
+def spotlight():
+    """Snapshot-backed: words captured during the daily poll (no live call)."""
+    _require_configured()
+    return {"words": db.latest_spotlight()}
+
+
+@api.get("/kana")
+def kana():
+    """Snapshot-backed per-kana/kanji mastery, with a weekly-delta arrow."""
+    _require_configured()
+    latest = db.latest_kana_mastery()
+    week_ago = db.kana_mastery_n_days_ago(7)
+    sections = {}
+    for section, chars in latest.items():
+        prior = week_ago.get(section, {})
+        sections[section] = [
+            {
+                "char": char,
+                "score": info["score"],
+                "delta": (info["score"] - prior[char]) if char in prior else None,
+                "detail": info["detail"],
+            }
+            for char, info in chars.items()
+        ]
+    return {"sections": sections}
+
+
+@api.get("/usage")
+def api_usage():
+    """Renshuu's own daily usage counter — for the sidebar footer and the
+    refresh confirm dialog. No live call; reads the last captured value."""
+    latest = db.latest_api_usage()
+    if not latest:
+        return {"calls_today": None, "daily_allowance": 500, "remaining": None, "ts": None}
+    calls_today = latest["calls_today"] or 0
+    allowance = latest["daily_allowance"] or 500
+    return {**latest, "remaining": max(0, allowance - calls_today)}
 
 
 @api.get("/history")

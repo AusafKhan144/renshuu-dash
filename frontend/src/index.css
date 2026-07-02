@@ -1,90 +1,137 @@
 @import "tailwindcss";
 
-/* "Dashboard Elevation" design tokens. Each Tailwind color maps to a runtime CSS
-   variable so the same utilities (bg-card, text-fg-muted, text-amber, border-card-
-   border, bg-amber-soft, …) resolve in both dark and light mode. The values are
-   the oklch palette from the design canvas. */
+/* "Study Dashboard" design tokens: a warmer red / gold / jade palette (Noto
+   Serif JP display + Inter body), replacing the old Bricolage Grotesque +
+   amber/teal/violet look. Each Tailwind color maps to a runtime CSS variable
+   so the same utilities (bg-card, text-fg-muted, text-amber, bg-amber-soft, …)
+   keep working in both dark and light mode — the old hue names (amber/teal/
+   violet/rose/success) are now aliases onto red/gold/jade so every existing
+   component inherits the new palette with no per-component edits. */
 @theme {
   --color-bg: var(--bg);
+  --color-surface: var(--surface);
   --color-card: var(--card);
   --color-inset: var(--inset);
+  --color-inset-red: var(--inset-red);
+  --color-inset-gold: var(--inset-gold);
+  --color-inset-jade: var(--inset-jade);
   --color-card-border: var(--card-border);
   --color-card-border-strong: var(--card-border-strong);
 
   --color-fg: var(--fg);
   --color-fg-muted: var(--fg-muted);
   --color-fg-faint: var(--fg-faint);
+  --color-on-accent: var(--on-accent);
 
-  --color-amber: var(--amber);
-  --color-amber-soft: var(--amber-soft);
-  --color-teal: var(--teal);
-  --color-teal-soft: var(--teal-soft);
-  --color-violet: var(--violet);
-  --color-violet-soft: var(--violet-soft);
-  --color-rose: var(--rose);
-  --color-rose-soft: var(--rose-soft);
-  --color-success: var(--success);
-  --color-success-soft: var(--success-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-jade: var(--jade);
+  --color-jade-soft: var(--jade-soft);
 
-  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  /* Legacy hue names, retuned onto the new palette so restyled analytics
+     components (TrendCard, AchievementsShelf, …) need no per-component edits. */
+  --color-amber: var(--gold);
+  --color-amber-soft: var(--gold-soft);
+  --color-teal: var(--jade);
+  --color-teal-soft: var(--jade-soft);
+  --color-violet: var(--gold);
+  --color-violet-soft: var(--gold-soft);
+  --color-rose: var(--red);
+  --color-rose-soft: var(--red-soft);
+  --color-success: var(--jade);
+  --color-success-soft: var(--jade-soft);
+
+  --font-display: "Noto Serif JP", ui-serif, Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
 }
 
 /* Dark theme (default). */
 :root {
   color-scheme: dark;
-  --bg: oklch(0.18 0.017 50);
-  --wash-a: oklch(0.4 0.09 50 / 0.22);
-  --wash-b: oklch(0.32 0.07 200 / 0.18);
-  --card: oklch(0.235 0.018 50);
+  --bg: oklch(0.19 0.02 40);
+  --wash-a: oklch(0.42 0.1 30 / 0.22);
+  --wash-b: oklch(0.36 0.08 155 / 0.16);
+  --surface: oklch(0.22 0.02 40);
+  --card: oklch(0.245 0.019 40);
   --card-border: oklch(1 0 0 / 0.07);
   --card-border-strong: oklch(1 0 0 / 0.12);
-  --inset: oklch(0.15 0.015 50);
-  --fg: oklch(0.96 0.008 70);
-  --fg-muted: oklch(0.73 0.015 60);
-  --fg-faint: oklch(0.54 0.015 60);
-  --amber: oklch(0.78 0.15 55);
-  --amber-soft: oklch(0.78 0.15 55 / 0.16);
-  --teal: oklch(0.76 0.11 195);
-  --teal-soft: oklch(0.76 0.11 195 / 0.16);
-  --violet: oklch(0.76 0.13 300);
-  --violet-soft: oklch(0.76 0.13 300 / 0.16);
-  --rose: oklch(0.74 0.15 15);
-  --rose-soft: oklch(0.74 0.15 15 / 0.16);
-  --success: oklch(0.76 0.13 145);
-  --success-soft: oklch(0.76 0.13 145 / 0.16);
-  --card-shadow: 0 20px 44px -12px oklch(0.05 0.01 50 / 0.55);
+  --inset: oklch(0.16 0.017 40);
+  --fg: oklch(0.96 0.008 60);
+  --fg-muted: oklch(0.73 0.014 50);
+  --fg-faint: oklch(0.54 0.014 50);
+  --on-accent: oklch(0.16 0.017 40);
+
+  --red: oklch(0.66 0.19 25);
+  --red-soft: oklch(0.66 0.19 25 / 0.16);
+  --inset-red: oklch(0.66 0.19 25 / 0.1);
+  --gold: oklch(0.79 0.15 75);
+  --gold-soft: oklch(0.79 0.15 75 / 0.16);
+  --inset-gold: oklch(0.79 0.15 75 / 0.1);
+  --jade: oklch(0.72 0.12 160);
+  --jade-soft: oklch(0.72 0.12 160 / 0.16);
+  --inset-jade: oklch(0.72 0.12 160 / 0.1);
+
+  /* Legacy hue variables (read directly via var(--amber) etc. in chart/ring
+     inline styles) — aliased onto the new palette. */
+  --amber: var(--gold);
+  --amber-soft: var(--gold-soft);
+  --teal: var(--jade);
+  --teal-soft: var(--jade-soft);
+  --violet: var(--gold);
+  --violet-soft: var(--gold-soft);
+  --rose: var(--red);
+  --rose-soft: var(--red-soft);
+  --success: var(--jade);
+  --success-soft: var(--jade-soft);
+
+  --card-shadow: 0 20px 44px -12px oklch(0.05 0.01 40 / 0.55);
 }
 
 /* Light theme. */
 html.light {
   color-scheme: light;
-  --bg: oklch(0.97 0.012 75);
-  --wash-a: oklch(0.86 0.05 55 / 0.35);
-  --wash-b: oklch(0.85 0.05 190 / 0.28);
+  --bg: oklch(0.97 0.014 70);
+  --wash-a: oklch(0.87 0.06 35 / 0.32);
+  --wash-b: oklch(0.85 0.06 155 / 0.22);
+  --surface: oklch(1 0 0);
   --card: oklch(1 0 0);
-  --card-border: oklch(0.25 0.02 60 / 0.1);
-  --card-border-strong: oklch(0.25 0.02 60 / 0.16);
-  --inset: oklch(0.94 0.015 70);
-  --fg: oklch(0.26 0.02 60);
-  --fg-muted: oklch(0.48 0.02 60);
-  --fg-faint: oklch(0.63 0.02 60);
-  --amber: oklch(0.64 0.17 50);
-  --amber-soft: oklch(0.64 0.17 50 / 0.14);
-  --teal: oklch(0.56 0.11 195);
-  --teal-soft: oklch(0.56 0.11 195 / 0.14);
-  --violet: oklch(0.56 0.15 300);
-  --violet-soft: oklch(0.56 0.15 300 / 0.14);
-  --rose: oklch(0.6 0.18 15);
-  --rose-soft: oklch(0.6 0.18 15 / 0.14);
-  --success: oklch(0.56 0.13 145);
-  --success-soft: oklch(0.56 0.13 145 / 0.14);
-  --card-shadow: 0 12px 32px -8px oklch(0.3 0.03 60 / 0.18);
+  --card-border: oklch(0.25 0.02 50 / 0.1);
+  --card-border-strong: oklch(0.25 0.02 50 / 0.16);
+  --inset: oklch(0.945 0.016 65);
+  --fg: oklch(0.27 0.02 40);
+  --fg-muted: oklch(0.48 0.02 40);
+  --fg-faint: oklch(0.63 0.02 40);
+  --on-accent: oklch(0.99 0.005 60);
+
+  --red: oklch(0.56 0.19 25);
+  --red-soft: oklch(0.56 0.19 25 / 0.13);
+  --inset-red: oklch(0.56 0.19 25 / 0.08);
+  --gold: oklch(0.64 0.15 70);
+  --gold-soft: oklch(0.64 0.15 70 / 0.14);
+  --inset-gold: oklch(0.64 0.15 70 / 0.08);
+  --jade: oklch(0.55 0.12 160);
+  --jade-soft: oklch(0.55 0.12 160 / 0.13);
+  --inset-jade: oklch(0.55 0.12 160 / 0.08);
+
+  --amber: var(--gold);
+  --amber-soft: var(--gold-soft);
+  --teal: var(--jade);
+  --teal-soft: var(--jade-soft);
+  --violet: var(--gold);
+  --violet-soft: var(--gold-soft);
+  --rose: var(--red);
+  --rose-soft: var(--red-soft);
+  --success: var(--jade);
+  --success-soft: var(--jade-soft);
+
+  --card-shadow: 0 12px 32px -8px oklch(0.3 0.03 50 / 0.16);
 }
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-    "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-family: var(--font-sans), "Hiragino Sans", "Noto Sans JP", sans-serif;
   background: var(--bg);
   color: var(--fg);
 }

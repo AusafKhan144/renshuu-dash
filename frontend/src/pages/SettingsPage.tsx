@@ -1,22 +1,19 @@
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { KeyRound, Bell, X, LogOut, Loader2, Target } from "lucide-react";
+import { Bell, KeyRound, Loader2, LogOut, Target } from "lucide-react";
 import {
   api,
   logout,
   setDailyGoal,
   useAuthStatus,
-  useSetupStatus,
   useOverview,
+  useSetupStatus,
 } from "../api/client";
-import { enablePush, disablePush, pushEnabledLocally, pushSupported } from "../push";
 import { Ring } from "../components/charts";
+import { enablePush, disablePush, pushEnabledLocally, pushSupported } from "../push";
 
-/** Settings modal: re-edit the Renshuu key, set a daily goal, manage phone
- *  notifications (Web Push), and log out. */
-export function SettingsPanel({ onClose }: { onClose: () => void }) {
+export function SettingsPage() {
   const qc = useQueryClient();
   const status = useSetupStatus(true);
   const auth = useAuthStatus();
@@ -48,87 +45,65 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <motion.div
-        initial={{ opacity: 0, scale: 0.97 }}
-        animate={{ opacity: 1, scale: 1 }}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-[18px] border border-card-border bg-card p-6 card-shadow"
-      >
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-xl font-bold">Settings</h2>
+    <div className="mx-auto max-w-lg">
+      <h1 className="font-display text-[22px] font-bold">Settings</h1>
+
+      <div className="mt-4 flex items-center gap-3 rounded-[14px] bg-inset p-3.5">
+        {ov ? (
+          <Ring size={46} stroke={5} frac={ov.xp.pct / 100} color="var(--jade)">
+            <span className="font-display text-[13px] font-bold">{ov.level}</span>
+          </Ring>
+        ) : (
+          <div className="h-[46px] w-[46px]" />
+        )}
+        <div>
+          <div className="text-[13.5px] font-bold">
+            {accountName ? `Connected as ${accountName}` : "Connected"}
+          </div>
+          {ov && <div className="text-[11.5px] text-fg-faint">{ov.level_title}</div>}
+        </div>
+      </div>
+
+      <Section icon={<KeyRound size={15} />} title="Renshuu API key">
+        <p className="mb-2 text-sm text-fg-muted">
+          {accountName ? `Connected as ${accountName}.` : "Connected."} Paste a new key to
+          replace it.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="New API key"
+            className="min-w-0 flex-1 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm outline-none focus:border-gold"
+          />
+          <PillButton onClick={saveKey} disabled={savingKey || !apiKey.trim()} busy={savingKey}>
+            Save
+          </PillButton>
+        </div>
+      </Section>
+
+      <Section icon={<Target size={15} />} title="Daily goal">
+        <DailyGoalRow
+          initial={status.data?.daily_goal ?? 30}
+          onSaved={() => qc.invalidateQueries()}
+        />
+      </Section>
+
+      <Section icon={<Bell size={15} />} title="Phone notifications">
+        <PushRow onChanged={() => qc.invalidateQueries({ queryKey: ["setup-status"] })} />
+      </Section>
+
+      {auth.data?.auth_required && (
+        <div className="mt-6 border-t border-card-border pt-4">
           <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-fg-faint hover:bg-inset"
-            aria-label="Close"
+            onClick={doLogout}
+            className="flex items-center gap-2 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm hover:text-fg"
           >
-            <X size={18} />
+            <LogOut size={15} /> Log out
           </button>
         </div>
-
-        {/* Account + level */}
-        <div className="mt-4 flex items-center gap-3 rounded-[14px] bg-inset p-3.5">
-          {ov ? (
-            <Ring size={46} stroke={5} frac={ov.xp.pct / 100} color="var(--teal)">
-              <span className="font-display text-[13px] font-bold">{ov.level}</span>
-            </Ring>
-          ) : (
-            <div className="h-[46px] w-[46px]" />
-          )}
-          <div>
-            <div className="text-[13.5px] font-bold">
-              {accountName ? `Connected as ${accountName}` : "Connected"}
-            </div>
-            {ov && (
-              <div className="text-[11.5px] text-fg-faint">{ov.level_title}</div>
-            )}
-          </div>
-        </div>
-
-        {/* Renshuu API key */}
-        <Section icon={<KeyRound size={15} />} title="Renshuu API key">
-          <p className="mb-2 text-sm text-fg-muted">
-            {accountName ? `Connected as ${accountName}.` : "Connected."} Paste a new key to replace it.
-          </p>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="New API key"
-              className="min-w-0 flex-1 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm outline-none focus:border-amber"
-            />
-            <PillButton onClick={saveKey} disabled={savingKey || !apiKey.trim()} busy={savingKey}>
-              Save
-            </PillButton>
-          </div>
-        </Section>
-
-        {/* Daily goal */}
-        <Section icon={<Target size={15} />} title="Daily goal">
-          <DailyGoalRow initial={status.data?.daily_goal ?? 30} onSaved={() => qc.invalidateQueries()} />
-        </Section>
-
-        {/* Phone notifications (Web Push) */}
-        <Section icon={<Bell size={15} />} title="Phone notifications">
-          <PushRow onChanged={() => qc.invalidateQueries({ queryKey: ["setup-status"] })} />
-        </Section>
-
-        {/* Logout (only when the instance is password-protected) */}
-        {auth.data?.auth_required && (
-          <div className="mt-6 border-t border-card-border pt-4">
-            <button
-              onClick={doLogout}
-              className="flex items-center gap-2 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm hover:text-fg"
-            >
-              <LogOut size={15} /> Log out
-            </button>
-          </div>
-        )}
-      </motion.div>
+      )}
     </div>
   );
 }
@@ -144,7 +119,7 @@ function Section({
 }) {
   return (
     <div className="mt-5">
-      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-bold text-amber">
+      <div className="mb-2 flex items-center gap-2 text-[12.5px] font-bold text-gold">
         {icon} {title}
       </div>
       {children}
@@ -167,7 +142,7 @@ function PillButton({
     <button
       onClick={onClick}
       disabled={disabled}
-      className="flex items-center gap-2 rounded-[10px] bg-amber px-3.5 py-2 text-[12.5px] font-bold text-bg disabled:opacity-50"
+      className="flex items-center gap-2 rounded-[10px] bg-gold px-3.5 py-2 text-[12.5px] font-bold text-on-accent disabled:opacity-50"
     >
       {busy ? <Loader2 size={14} className="animate-spin" /> : null}
       {children}
@@ -204,7 +179,7 @@ function DailyGoalRow({ initial, onSaved }: { initial: number; onSaved: () => vo
         max={500}
         value={goal}
         onChange={(e) => setGoal(e.target.value)}
-        className="w-24 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm outline-none focus:border-amber"
+        className="w-24 rounded-[10px] border border-card-border-strong bg-inset px-3 py-2 text-sm outline-none focus:border-gold"
       />
       <span className="text-sm text-fg-muted">terms / day</span>
       <PillButton onClick={save} disabled={saving} busy={saving}>
@@ -255,8 +230,8 @@ function PushRow({ onChanged }: { onChanged: () => void }) {
   if (!supported) {
     return (
       <p className="text-sm text-fg-muted">
-        This browser doesn't support push notifications. Install the app to your
-        home screen (iOS 16.4+) and try again.
+        This browser doesn't support push notifications. Install the app to your home screen
+        (iOS 16.4+) and try again.
       </p>
     );
   }
@@ -274,7 +249,7 @@ function PushRow({ onChanged }: { onChanged: () => void }) {
             "flex items-center gap-2 rounded-[10px] px-3.5 py-2 text-[12.5px] font-bold disabled:opacity-50 " +
             (on
               ? "border border-card-border-strong bg-inset text-fg"
-              : "bg-amber text-bg")
+              : "bg-gold text-on-accent")
           }
         >
           {busy ? <Loader2 size={14} className="animate-spin" /> : null}

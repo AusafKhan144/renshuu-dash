@@ -25,7 +25,7 @@ self.addEventListener("push", (event: PushEvent) => {
   } catch {
     payload = { body: event.data?.text() };
   }
-  const title = payload.title || "練習 Renshuu Dashboard";
+  const title = payload.title || "Renshu · Renshuu Dashboard";
   event.waitUntil(
     self.registration.showNotification(title, {
       body: payload.body || "",

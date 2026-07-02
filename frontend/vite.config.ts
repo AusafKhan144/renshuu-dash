@@ -17,11 +17,11 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["apple-touch-icon.png"],
       manifest: {
-        name: "練習 · Renshuu Dashboard",
-        short_name: "練習",
+        name: "Renshu · Renshuu Dashboard",
+        short_name: "Renshu",
         description: "Your personal Renshuu Japanese progress dashboard",
-        theme_color: "#141210",
-        background_color: "#141210",
+        theme_color: "#1c110d",
+        background_color: "#1c110d",
         display: "standalone",
         start_url: "/",
         icons: [

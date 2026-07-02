@@ -20,9 +20,9 @@ export const HUE_SOFT: Record<Hue, string> = {
 
 // JLPT level → accent, from N5 (easiest) to N1 (hardest).
 export const JLPT_COLORS = [
-  "var(--success)",
-  "var(--teal)",
-  "var(--violet)",
-  "var(--amber)",
-  "var(--rose)",
+  "var(--jade)",
+  "var(--jade)",
+  "var(--gold)",
+  "var(--gold)",
+  "var(--red)",
 ];

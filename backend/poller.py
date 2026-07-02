@@ -18,9 +18,12 @@ import gamification
 import notifier
 import settings
 from config import PROFILE_SNAPSHOT_HOUR, SCHEDULE_POLL_MINUTES
-from renshuu_client import get_profile, get_schedules
+from renshuu_client import get_kana_mastery, get_profile, get_schedule_terms, get_schedules
 
 log = logging.getLogger("renshu.poller")
+
+# Spotlight: how many "focus" (lowest-mastery, defined) terms to surface.
+SPOTLIGHT_COUNT = 5
 
 _scheduler: BackgroundScheduler | None = None
 
@@ -63,11 +66,77 @@ def snapshot_profile():
     return profile
 
 
+def snapshot_kana_mastery():
+    """Capture per-kana/kanji mastery from the hiragana/katakana/kanji schedules.
+
+    Best-effort per section: a missing/renamed schedule just skips that
+    section rather than failing the whole poll.
+    """
+    api_key = settings.get_api_key()
+    if not api_key:
+        return None
+    ids = settings.get_kana_schedule_ids()
+    for section, schedule_id in ids.items():
+        if not schedule_id:
+            continue
+        rows, err = get_kana_mastery(api_key, schedule_id)
+        if not rows:
+            log.warning("Kana mastery capture failed for %s: %s", section, err)
+            continue
+        db.replace_kana_mastery(section, rows)
+    log.info("Captured kana mastery snapshot")
+
+
+def snapshot_spotlight():
+    """Capture a few 'focus' vocab terms (lowest mastery, defined) for the
+    dashboard's Word Spotlight. Best-effort: an empty result just leaves the
+    spotlight empty rather than failing the poll."""
+    api_key = settings.get_api_key()
+    if not api_key:
+        return None
+    kana_ids = set(filter(None, settings.get_kana_schedule_ids().values()))
+    schedules = get_schedules(api_key)
+    vocab = [
+        s for s in schedules
+        if s.get("booktype") == "vocab" and str(s.get("id")) not in kana_ids
+    ]
+    if not vocab:
+        return None
+    schedule_id = str(vocab[0]["id"])
+    data, err = get_schedule_terms(api_key, schedule_id, page=1)
+    if err:
+        log.warning("Spotlight capture failed: %s", err)
+        return None
+    terms = (data.get("contents") or {}).get("terms", []) or []
+    picks = []
+    for t in terms:
+        word = t.get("kanji_full") or t.get("hiragana_full")
+        defs = t.get("def") or []
+        if not word or not defs:
+            continue
+        try:
+            mastery = int(float((t.get("user_data") or {}).get("mastery_avg_perc") or 0))
+        except (TypeError, ValueError):
+            mastery = 0
+        picks.append({
+            "word_id": t.get("id"),
+            "kanji_full": t.get("kanji_full") or "",
+            "hiragana_full": t.get("hiragana_full") or "",
+            "def": "; ".join(defs[:2]),
+            "mastery": mastery,
+        })
+    picks.sort(key=lambda p: p["mastery"])
+    db.replace_spotlight(picks[:SPOTLIGHT_COUNT])
+    log.info("Captured %d spotlight words", min(len(picks), SPOTLIGHT_COUNT))
+
+
 def seed_initial_snapshots():
     """On first successful setup, capture a baseline so day 1 isn't blank."""
     try:
         snapshot_profile()
         poll_schedules(notify=False)
+        snapshot_kana_mastery()
+        snapshot_spotlight()
     except Exception as e:  # noqa: BLE001 - best-effort seeding
         log.warning("Initial snapshot seeding failed: %s", e)
 
@@ -84,6 +153,14 @@ def start_scheduler():
     sched.add_job(
         snapshot_profile, "cron", hour=PROFILE_SNAPSHOT_HOUR, minute=0,
         id="snapshot_profile",
+    )
+    sched.add_job(
+        snapshot_kana_mastery, "cron", hour=PROFILE_SNAPSHOT_HOUR, minute=5,
+        id="snapshot_kana_mastery",
+    )
+    sched.add_job(
+        snapshot_spotlight, "cron", hour=PROFILE_SNAPSHOT_HOUR, minute=10,
+        id="snapshot_spotlight",
     )
     sched.start()
     _scheduler = sched

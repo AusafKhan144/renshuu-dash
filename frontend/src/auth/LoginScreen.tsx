@@ -33,7 +33,7 @@ export function LoginScreen() {
         animate={{ opacity: 1, scale: 1 }}
         className="flex w-full max-w-sm flex-col items-center"
       >
-        <div className="font-display text-4xl font-bold">練習</div>
+        <div className="font-display text-4xl font-bold">Renshu</div>
         <p className="mt-2 text-center text-sm leading-relaxed text-fg-muted">
           Your streak is waiting.
           <br />

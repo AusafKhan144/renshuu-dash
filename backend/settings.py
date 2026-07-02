@@ -6,13 +6,14 @@ key is kept in plaintext in their own DB; the README documents this and the
 .gitignore keeps the DB out of version control.
 """
 
+import json
 import sys
 from pathlib import Path
 
 # Make the shared client (one directory up) importable.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from renshuu_client import validate_key  # noqa: E402
+from renshuu_client import discover_kana_schedule_ids, validate_key  # noqa: E402
 
 import db  # noqa: E402
 from config import ENV_API_KEY  # noqa: E402
@@ -21,6 +22,7 @@ KEY_SETTING = "renshuu_api_key"
 ACCOUNT_NAME_SETTING = "renshuu_account_name"
 DAILY_GOAL_SETTING = "daily_goal"
 DEFAULT_DAILY_GOAL = 30
+KANA_SCHEDULE_IDS_SETTING = "kana_schedule_ids"
 
 
 def bootstrap_from_env():
@@ -69,3 +71,17 @@ def account_summary():
     if not is_configured():
         return None
     return {"name": db.get_setting(ACCOUNT_NAME_SETTING)}
+
+
+def get_kana_schedule_ids():
+    """Cached {hiragana, katakana, kanji} schedule IDs, resolving + caching on
+    first use (schedule IDs differ per user and rarely change)."""
+    raw = db.get_setting(KANA_SCHEDULE_IDS_SETTING)
+    if raw:
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            pass
+    ids = discover_kana_schedule_ids(get_api_key())
+    db.set_setting(KANA_SCHEDULE_IDS_SETTING, json.dumps(ids))
+    return ids
