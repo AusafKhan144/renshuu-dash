@@ -13,6 +13,7 @@ import {
   type LookupResult,
   type WordResult,
 } from "../api/client";
+import { GrammarDetail } from "./GrammarDetail";
 import { Card } from "./ui";
 
 type LookupType = "word" | "kanji" | "grammar";
@@ -26,6 +27,7 @@ export function QuickLookup() {
   const usage = useUsage(true);
   const lists = useLists(!!query);
   const result = useLookup(query?.type ?? "word", query?.q ?? "", !!query);
+  const [grammarId, setGrammarId] = useState<string | null>(null);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -92,9 +94,11 @@ export function QuickLookup() {
 
       {query && result.data && (
         <div className="mt-3 rounded-[14px] bg-inset p-3.5">
-          <LookupResultView result={result.data} onSave={save} />
+          <LookupResultView result={result.data} onSave={save} onOpenGrammar={setGrammarId} />
         </div>
       )}
+
+      <GrammarDetail grammarId={grammarId} onClose={() => setGrammarId(null)} />
     </Card>
   );
 }
@@ -102,9 +106,11 @@ export function QuickLookup() {
 function LookupResultView({
   result,
   onSave,
+  onOpenGrammar,
 }: {
   result: LookupResult;
   onSave: (wordId: string) => void;
+  onOpenGrammar: (grammarId: string) => void;
 }) {
   if (result.type === "word") return <WordView word={result.word} onSave={onSave} />;
   if (result.type === "kanji") {
@@ -114,7 +120,7 @@ function LookupResultView({
   }
   if (!result.available) return <Unavailable />;
   if (!result.found) return <NoMatch />;
-  return <GrammarView grammar={result.grammar ?? []} />;
+  return <GrammarView grammar={result.grammar ?? []} onOpenGrammar={onOpenGrammar} />;
 }
 
 function WordView({ word, onSave }: { word: WordResult | null; onSave: (id: string) => void }) {
@@ -161,25 +167,28 @@ function KanjiView({ kanjis }: { kanjis: KanjiResult[] }) {
   );
 }
 
-function GrammarView({ grammar }: { grammar: GrammarResult[] }) {
+function GrammarView({
+  grammar,
+  onOpenGrammar,
+}: {
+  grammar: GrammarResult[];
+  onOpenGrammar: (grammarId: string) => void;
+}) {
   return (
     <div className="flex flex-col gap-2.5">
       {grammar.slice(0, 3).map((g) => (
-        <div key={g.grammar_id}>
+        <button
+          key={g.grammar_id}
+          onClick={() => onOpenGrammar(g.grammar_id)}
+          className="text-left hover:opacity-80"
+        >
           <span className="font-display text-[15px] font-bold">
             {g.title_japanese || g.title_english}
           </span>
-          {g.url && (
-            <a
-              href={g.url}
-              target="_blank"
-              rel="noreferrer"
-              className="ml-2 inline-flex items-center gap-1 text-[11px] text-gold"
-            >
-              <ExternalLink size={11} /> View
-            </a>
-          )}
-        </div>
+          <span className="ml-2 inline-flex items-center gap-1 text-[11px] text-gold">
+            <ExternalLink size={11} /> Details
+          </span>
+        </button>
       ))}
     </div>
   );

@@ -193,9 +193,25 @@ def sync_and_list(stats: dict) -> list:
 
 # --- insights -------------------------------------------------------------
 
-def build_insights(stats: dict, reviews_due: int) -> list:
-    """Up to three short, real nudges from the current stats."""
+def build_insights(stats: dict, reviews_due: int, analytics_summary: dict | None = None) -> list:
+    """Up to three short, real nudges from the current stats, plus (when
+    synced term data is available) weakness/pace-aware tips from analytics."""
     insights = []
+    a = analytics_summary or {}
+
+    # 0. Synced-data tips take priority — they're the most actionable.
+    if a.get("leech_count"):
+        insights.append(
+            f"{a['leech_count']} leech{'es' if a['leech_count'] != 1 else ''} keep tripping you up — "
+            "worth a focused review from Insights."
+        )
+    if a.get("weakest_vector"):
+        insights.append(f"{a['weakest_vector']} is your weakest study mode lately.")
+    if a.get("overdue_count"):
+        insights.append(f"{a['overdue_count']} terms are overdue for review.")
+    if a.get("nearest_eta"):
+        label, eta = a["nearest_eta"]
+        insights.append(f"You're on pace for {label.upper()} by {eta}.")
 
     # 1. Highest in-progress JLPT cell across categories.
     jlpt = stats.get("jlpt") or {}
@@ -230,4 +246,4 @@ def build_insights(stats: dict, reviews_due: int) -> list:
     elif cur > 0:
         insights.append(f"{cur}-day streak and all caught up. Nicely done.")
 
-    return insights[:3]
+    return insights[:5]

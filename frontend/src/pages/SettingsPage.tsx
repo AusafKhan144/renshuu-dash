@@ -1,14 +1,18 @@
 import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Bell, KeyRound, Loader2, LogOut, Target } from "lucide-react";
+import { Bell, KeyRound, Loader2, LogOut, RefreshCw, Sparkles, Target } from "lucide-react";
 import {
   api,
   logout,
   setDailyGoal,
+  setDigestEnabled,
+  setStreakCheckEnabled,
+  syncTerms,
   useAuthStatus,
   useOverview,
   useSetupStatus,
+  useUsage,
 } from "../api/client";
 import { Ring } from "../components/charts";
 import { enablePush, disablePush, pushEnabledLocally, pushSupported } from "../push";
@@ -18,6 +22,7 @@ export function SettingsPage() {
   const status = useSetupStatus(true);
   const auth = useAuthStatus();
   const overview = useOverview(true);
+  const usage = useUsage(true);
   const [apiKey, setApiKey] = useState("");
   const [savingKey, setSavingKey] = useState(false);
 
@@ -92,6 +97,31 @@ export function SettingsPage() {
 
       <Section icon={<Bell size={15} />} title="Phone notifications">
         <PushRow onChanged={() => qc.invalidateQueries({ queryKey: ["setup-status"] })} />
+      </Section>
+
+      <Section icon={<Sparkles size={15} />} title="Kao's coaching">
+        <p className="mb-2.5 text-sm text-fg-muted">
+          Kao can check in once a day with a friendly digest, and again in the evening if a streak
+          is about to slip. Both need notifications enabled above.
+        </p>
+        <div className="flex flex-col gap-2">
+          <ToggleRow
+            label="Morning digest"
+            hint="Reviews due, weak spots, and pace — one note each morning."
+            initial={status.data?.digest_enabled ?? true}
+            onChange={setDigestEnabled}
+          />
+          <ToggleRow
+            label="Streak-risk nudge"
+            hint="An evening nudge from Kao if a streak hasn't been studied yet today."
+            initial={status.data?.streak_check_enabled ?? true}
+            onChange={setStreakCheckEnabled}
+          />
+        </div>
+      </Section>
+
+      <Section icon={<RefreshCw size={15} />} title="Full term sync">
+        <SyncTermsRow remaining={usage.data?.remaining ?? null} onDone={() => qc.invalidateQueries()} />
       </Section>
 
       {auth.data?.auth_required && (
@@ -185,6 +215,119 @@ function DailyGoalRow({ initial, onSaved }: { initial: number; onSaved: () => vo
       <PillButton onClick={save} disabled={saving} busy={saving}>
         Save
       </PillButton>
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  hint,
+  initial,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  initial: boolean;
+  onChange: (on: boolean) => Promise<void>;
+}) {
+  const [on, setOn] = useState(initial);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => setOn(initial), [initial]);
+
+  async function toggle() {
+    const next = !on;
+    setOn(next);
+    setBusy(true);
+    try {
+      await onChange(next);
+    } catch {
+      setOn(!next);
+      toast.error("Couldn't save that.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-[10px] bg-inset px-3 py-2.5">
+      <div className="min-w-0">
+        <div className="text-[12.5px] font-bold">{label}</div>
+        <div className="text-[11px] text-fg-faint">{hint}</div>
+      </div>
+      <button
+        onClick={toggle}
+        disabled={busy}
+        aria-pressed={on}
+        aria-label={label}
+        className={"relative h-6 w-11 shrink-0 rounded-full transition-colors " + (on ? "bg-gold" : "bg-card-border-strong")}
+      >
+        <span
+          className="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform"
+          style={{ transform: on ? "translateX(20px)" : "translateX(0)" }}
+        />
+      </button>
+    </div>
+  );
+}
+
+function SyncTermsRow({ remaining, onDone }: { remaining: number | null; onDone: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const result = await syncTerms();
+      if (result.complete) {
+        toast.success("Full sync complete — every term you've studied is now indexed.");
+      } else {
+        toast(
+          `Synced ${result.calls_used ?? 0} pages — paused for today's quota. It'll resume automatically.`
+        );
+      }
+      onDone();
+    } catch {
+      toast.error("Sync failed. Try again in a bit.");
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-sm text-fg-muted">
+        Walk your entire study history (vocab, kanji, grammar, sentences) into the Insights page.
+        Runs nightly on its own — use this to kick off (or resume) a sync right now.
+      </p>
+      {!confirming ? (
+        <PillButton onClick={() => setConfirming(true)}>Full term sync</PillButton>
+      ) : (
+        <div className="rounded-[12px] border border-card-border-strong bg-inset p-3">
+          <p className="mb-2 text-[12.5px] text-fg-muted">
+            This can use a large chunk of today's Renshuu API quota.
+            {remaining != null && (
+              <>
+                {" "}
+                You have <span className="font-bold text-fg">{remaining} / 500</span> calls left today.
+              </>
+            )}{" "}
+            It's resumable, so it's safe to run even if it doesn't finish.
+          </p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirming(false)}
+              className="rounded-[10px] border border-card-border-strong px-3.5 py-2 text-[12.5px] font-bold text-fg-muted hover:text-fg"
+            >
+              Cancel
+            </button>
+            <PillButton onClick={run} disabled={busy} busy={busy}>
+              Start sync
+            </PillButton>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

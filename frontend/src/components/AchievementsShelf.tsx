@@ -25,6 +25,7 @@ export function AchievementsShelf({ enabled }: { enabled: boolean }) {
     try {
       await claimAchievement(id);
       setCelebrate(true);
+      toast.success("🎉 Kao is cheering for you — badge claimed!");
       window.setTimeout(() => setCelebrate(false), 1500);
       await qc.invalidateQueries({ queryKey: ["achievements"] });
     } catch {

@@ -114,12 +114,81 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_notif_ts ON notifications_log(ts);
             CREATE INDEX IF NOT EXISTS idx_spotlight_day ON spotlight(day);
             CREATE INDEX IF NOT EXISTS idx_kana_mastery_day ON kana_mastery(day, section);
+
+            -- One row per term ever seen, across a full /list/all/{termtype} sync.
+            CREATE TABLE IF NOT EXISTS terms (
+                termtype   TEXT NOT NULL,
+                term_id    TEXT NOT NULL,
+                display    TEXT,
+                reading    TEXT,
+                definition TEXT,
+                jlpt       TEXT,
+                payload    TEXT,
+                first_seen TEXT NOT NULL,
+                last_seen  TEXT NOT NULL,
+                PRIMARY KEY (termtype, term_id)
+            );
+
+            -- Change-only daily mastery facts: one row per term per day its
+            -- mastery/counts actually changed (idempotent re-sync same day).
+            CREATE TABLE IF NOT EXISTS term_mastery_daily (
+                day          TEXT NOT NULL,
+                termtype     TEXT NOT NULL,
+                term_id      TEXT NOT NULL,
+                mastery      INTEGER,
+                correct      INTEGER,
+                missed       INTEGER,
+                vectors_json TEXT,
+                PRIMARY KEY (day, termtype, term_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_tmd_term ON term_mastery_daily(termtype, term_id, day);
+
+            -- Daily aggregate per termtype, written once a sync fully completes.
+            CREATE TABLE IF NOT EXISTS mastery_daily_agg (
+                day          TEXT NOT NULL,
+                termtype     TEXT NOT NULL,
+                total        INTEGER,
+                avg_mastery  REAL,
+                b0           INTEGER,
+                b20          INTEGER,
+                b40          INTEGER,
+                b60          INTEGER,
+                b80          INTEGER,
+                PRIMARY KEY (day, termtype)
+            );
+
+            -- Resumable cursor for the nightly term sync, one row per termtype.
+            CREATE TABLE IF NOT EXISTS sync_state (
+                termtype     TEXT PRIMARY KEY,
+                day          TEXT,
+                next_page    INTEGER DEFAULT 1,
+                total_pages  INTEGER,
+                completed_at TEXT
+            );
+
+            -- Historical review-workload forecast, captured free from /schedule.
+            CREATE TABLE IF NOT EXISTS schedule_upcoming (
+                day             TEXT NOT NULL,
+                schedule_id     TEXT NOT NULL,
+                due_date        TEXT NOT NULL,
+                terms_to_review INTEGER,
+                PRIMARY KEY (day, schedule_id, due_date)
+            );
+
+            -- TTL cache for live reibun/grammar lookups (avoid re-spending quota).
+            CREATE TABLE IF NOT EXISTS api_cache (
+                key        TEXT PRIMARY KEY,
+                payload    TEXT,
+                fetched_at TEXT NOT NULL
+            );
             """
         )
         # Lightweight column migration: add adventure_level to existing DBs.
         cols = {r["name"] for r in c.execute("PRAGMA table_info(profile_snapshots)")}
         if "adventure_level" not in cols:
             c.execute("ALTER TABLE profile_snapshots ADD COLUMN adventure_level INTEGER")
+        if "kao_url" not in cols:
+            c.execute("ALTER TABLE profile_snapshots ADD COLUMN kao_url TEXT")
         # Lightweight column migration: add detail to existing kana_mastery tables.
         cols = {r["name"] for r in c.execute("PRAGMA table_info(kana_mastery)")}
         if "detail" not in cols:
@@ -155,8 +224,8 @@ def insert_profile_snapshot(profile: dict):
         c.execute(
             """INSERT INTO profile_snapshots
                (ts, total, total_vocab, total_kanji, total_grammar, total_sent,
-                streak_json, level_percs_json, adventure_level)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                streak_json, level_percs_json, adventure_level, kao_url)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
             (
                 _now(),
                 studied.get("total"),
@@ -167,6 +236,7 @@ def insert_profile_snapshot(profile: dict):
                 json.dumps(profile.get("streaks", {})),
                 json.dumps(profile.get("level_progress_percs", {})),
                 profile.get("adventure_level"),
+                profile.get("kao"),
             ),
         )
 
@@ -223,6 +293,36 @@ def profile_history(metric: str, days: int):
             (f"-{int(days)} days",),
         ).fetchall()
         return [{"day": r["day"], "value": r["value"]} for r in rows]
+
+
+def profile_level_history(days: int = 90) -> list:
+    """One point per day (last snapshot) of the raw level_progress_percs JSON,
+    for pace forecasting (Phase 3) and the JLPT trend chart."""
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT date(ts) AS day, level_percs_json
+            FROM profile_snapshots p
+            WHERE ts >= datetime('now', ?)
+              AND ts = (SELECT MAX(ts) FROM profile_snapshots WHERE date(ts) = date(p.ts))
+            ORDER BY day
+            """,
+            (f"-{int(days)} days",),
+        ).fetchall()
+        out = []
+        for r in rows:
+            try:
+                percs = json.loads(r["level_percs_json"] or "{}")
+            except (TypeError, ValueError):
+                percs = {}
+            out.append({"day": r["day"], "percs": percs})
+        return out
+
+
+def jlpt_history(cat: str, level: str, days: int = 90) -> list:
+    """[{day, value}] trend of one JLPT category/level's coverage %."""
+    hist = profile_level_history(days)
+    return [{"day": h["day"], "value": (h["percs"].get(cat) or {}).get(level)} for h in hist]
 
 
 def daily_activity(days: int):
@@ -493,3 +593,301 @@ def kana_mastery_n_days_ago(days: int) -> dict:
         for r in rows:
             out.setdefault(r["section"], {})[r["char"]] = r["score"]
         return out
+
+
+# --- Kao mascot history ----------------------------------------------------
+
+def kao_history() -> list:
+    """Distinct Kao image URLs over time: [{kao_url, first_seen, adventure_level}]."""
+    with _conn() as c:
+        rows = c.execute(
+            """
+            SELECT kao_url, MIN(date(ts)) AS first_seen,
+                   (SELECT adventure_level FROM profile_snapshots p2
+                    WHERE p2.kao_url = p.kao_url ORDER BY ts ASC LIMIT 1) AS adventure_level
+            FROM profile_snapshots p
+            WHERE kao_url IS NOT NULL AND kao_url != ''
+            GROUP BY kao_url
+            ORDER BY first_seen ASC
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# --- term sync (Phase 1) ---------------------------------------------------
+
+def upsert_terms(termtype: str, terms: list):
+    """Insert/update term rows; `first_seen` sticks, `last_seen` always advances."""
+    if not terms:
+        return
+    now = _now()
+    with _conn() as c:
+        c.executemany(
+            """
+            INSERT INTO terms (termtype, term_id, display, reading, definition, jlpt, payload, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(termtype, term_id) DO UPDATE SET
+                display = excluded.display,
+                reading = excluded.reading,
+                definition = excluded.definition,
+                jlpt = excluded.jlpt,
+                payload = excluded.payload,
+                last_seen = excluded.last_seen
+            """,
+            [
+                (
+                    termtype, t["term_id"], t.get("display"), t.get("reading"),
+                    t.get("definition"), t.get("jlpt"), json.dumps(t.get("payload") or {}),
+                    now, now,
+                )
+                for t in terms
+            ],
+        )
+
+
+def insert_term_mastery_if_changed(termtype: str, rows: list) -> int:
+    """INSERT OR REPLACE mastery facts, skipping any unchanged from the latest
+    known row for that term. Idempotent for a same-day re-sync. Returns the
+    number of rows actually written."""
+    if not rows:
+        return 0
+    with _conn() as c:
+        latest = {
+            r["term_id"]: (r["mastery"], r["correct"], r["missed"])
+            for r in c.execute(
+                """
+                SELECT term_id, mastery, correct, missed FROM term_mastery_daily t
+                WHERE termtype = ? AND day = (
+                    SELECT MAX(day) FROM term_mastery_daily
+                    WHERE termtype = t.termtype AND term_id = t.term_id
+                )
+                """,
+                (termtype,),
+            )
+        }
+        today = datetime.now(timezone.utc).date().isoformat()
+        to_write = []
+        for r in rows:
+            key = (r["mastery"], r["correct"], r["missed"])
+            if latest.get(r["term_id"]) == key:
+                continue
+            to_write.append(
+                (today, termtype, r["term_id"], r["mastery"], r["correct"], r["missed"],
+                 json.dumps(r.get("vectors") or {}))
+            )
+        if to_write:
+            c.executemany(
+                """INSERT INTO term_mastery_daily
+                   (day, termtype, term_id, mastery, correct, missed, vectors_json)
+                   VALUES (?,?,?,?,?,?,?)
+                   ON CONFLICT(day, termtype, term_id) DO UPDATE SET
+                       mastery = excluded.mastery, correct = excluded.correct,
+                       missed = excluded.missed, vectors_json = excluded.vectors_json""",
+                to_write,
+            )
+        return len(to_write)
+
+
+def latest_term_mastery(termtype: str | None = None) -> list:
+    """Latest known mastery row per term, joined to `terms` for display info.
+    Filters by termtype if given, else all termtypes."""
+    with _conn() as c:
+        where = "WHERE te.termtype = ?" if termtype else ""
+        params = (termtype,) if termtype else ()
+        rows = c.execute(
+            f"""
+            SELECT te.termtype, te.term_id, te.display, te.reading, te.definition, te.jlpt,
+                   tmd.day, tmd.mastery, tmd.correct, tmd.missed, tmd.vectors_json
+            FROM terms te
+            LEFT JOIN term_mastery_daily tmd
+                ON tmd.termtype = te.termtype AND tmd.term_id = te.term_id
+                AND tmd.day = (
+                    SELECT MAX(day) FROM term_mastery_daily
+                    WHERE termtype = te.termtype AND term_id = te.term_id
+                )
+            {where}
+            """,
+            params,
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["vectors"] = json.loads(d.pop("vectors_json") or "null") or {}
+            out.append(d)
+        return out
+
+
+def get_term(termtype: str, term_id: str):
+    """Full `terms` row (incl. raw payload) joined to its latest mastery fact."""
+    with _conn() as c:
+        row = c.execute(
+            """
+            SELECT te.termtype, te.term_id, te.display, te.reading, te.definition, te.jlpt, te.payload,
+                   tmd.day, tmd.mastery, tmd.correct, tmd.missed, tmd.vectors_json
+            FROM terms te
+            LEFT JOIN term_mastery_daily tmd
+                ON tmd.termtype = te.termtype AND tmd.term_id = te.term_id
+                AND tmd.day = (
+                    SELECT MAX(day) FROM term_mastery_daily
+                    WHERE termtype = te.termtype AND term_id = te.term_id
+                )
+            WHERE te.termtype = ? AND te.term_id = ?
+            """,
+            (termtype, term_id),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["vectors"] = json.loads(d.pop("vectors_json") or "null") or {}
+        d["payload"] = json.loads(d.pop("payload") or "null") or {}
+        return d
+
+
+def term_mastery_history(termtype: str, term_id: str, days: int = 90) -> list:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT day, mastery, correct, missed FROM term_mastery_daily
+               WHERE termtype = ? AND term_id = ? AND day >= date('now', ?)
+               ORDER BY day""",
+            (termtype, term_id, f"-{int(days)} days"),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_sync_state(termtype: str):
+    with _conn() as c:
+        row = c.execute(
+            "SELECT termtype, day, next_page, total_pages, completed_at FROM sync_state WHERE termtype = ?",
+            (termtype,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def set_sync_state(termtype: str, day: str, next_page: int, total_pages: int | None = None, completed: bool = False):
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO sync_state (termtype, day, next_page, total_pages, completed_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(termtype) DO UPDATE SET
+                   day = excluded.day, next_page = excluded.next_page,
+                   total_pages = excluded.total_pages,
+                   completed_at = excluded.completed_at""",
+            (termtype, day, next_page, total_pages, _now() if completed else None),
+        )
+
+
+def write_mastery_agg(day: str):
+    """Recompute the mastery_daily_agg row for `day` from the latest per-term mastery."""
+    with _conn() as c:
+        termtypes = [r["termtype"] for r in c.execute("SELECT DISTINCT termtype FROM terms")]
+        for termtype in termtypes:
+            rows = c.execute(
+                """
+                SELECT tmd.mastery FROM terms te
+                JOIN term_mastery_daily tmd
+                    ON tmd.termtype = te.termtype AND tmd.term_id = te.term_id
+                    AND tmd.day = (
+                        SELECT MAX(day) FROM term_mastery_daily
+                        WHERE termtype = te.termtype AND term_id = te.term_id
+                    )
+                WHERE te.termtype = ?
+                """,
+                (termtype,),
+            ).fetchall()
+            masteries = [r["mastery"] or 0 for r in rows]
+            total = len(masteries)
+            avg_mastery = sum(masteries) / total if total else 0.0
+            buckets = {"b0": 0, "b20": 0, "b40": 0, "b60": 0, "b80": 0}
+            for m in masteries:
+                if m < 20:
+                    buckets["b0"] += 1
+                elif m < 40:
+                    buckets["b20"] += 1
+                elif m < 60:
+                    buckets["b40"] += 1
+                elif m < 80:
+                    buckets["b60"] += 1
+                else:
+                    buckets["b80"] += 1
+            c.execute(
+                """INSERT INTO mastery_daily_agg (day, termtype, total, avg_mastery, b0, b20, b40, b60, b80)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(day, termtype) DO UPDATE SET
+                       total = excluded.total, avg_mastery = excluded.avg_mastery,
+                       b0 = excluded.b0, b20 = excluded.b20, b40 = excluded.b40,
+                       b60 = excluded.b60, b80 = excluded.b80""",
+                (day, termtype, total, avg_mastery, buckets["b0"], buckets["b20"],
+                 buckets["b40"], buckets["b60"], buckets["b80"]),
+            )
+
+
+def mastery_agg_history(termtype: str, days: int = 60) -> list:
+    with _conn() as c:
+        rows = c.execute(
+            """SELECT day, total, avg_mastery, b0, b20, b40, b60, b80
+               FROM mastery_daily_agg WHERE termtype = ? AND day >= date('now', ?)
+               ORDER BY day""",
+            (termtype, f"-{int(days)} days"),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def latest_mastery_agg(termtype: str):
+    with _conn() as c:
+        row = c.execute(
+            """SELECT day, total, avg_mastery, b0, b20, b40, b60, b80
+               FROM mastery_daily_agg WHERE termtype = ? ORDER BY day DESC LIMIT 1""",
+            (termtype,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def insert_schedule_upcoming(schedule_id: str, upcoming: list):
+    day = datetime.now(timezone.utc).date().isoformat()
+    with _conn() as c:
+        c.executemany(
+            """INSERT INTO schedule_upcoming (day, schedule_id, due_date, terms_to_review)
+               VALUES (?,?,?,?)
+               ON CONFLICT(day, schedule_id, due_date) DO UPDATE SET
+                   terms_to_review = excluded.terms_to_review""",
+            [
+                (day, schedule_id, str(u.get("days_in_future")), int(float(u.get("terms_to_review") or 0)))
+                for u in upcoming
+            ],
+        )
+
+
+def latest_schedule_upcoming() -> list:
+    """Most recently captured upcoming-review rows, across all schedules."""
+    with _conn() as c:
+        row = c.execute("SELECT MAX(day) AS day FROM schedule_upcoming").fetchone()
+        if not row or not row["day"]:
+            return []
+        rows = c.execute(
+            "SELECT schedule_id, due_date, terms_to_review FROM schedule_upcoming WHERE day = ?",
+            (row["day"],),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def cache_get(key: str, ttl_days: int = 30):
+    with _conn() as c:
+        row = c.execute(
+            "SELECT payload, fetched_at FROM api_cache WHERE key = ? AND fetched_at >= datetime('now', ?)",
+            (key, f"-{int(ttl_days)} days"),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row["payload"])
+        except (TypeError, ValueError):
+            return None
+
+
+def cache_put(key: str, payload):
+    with _conn() as c:
+        c.execute(
+            """INSERT INTO api_cache (key, payload, fetched_at) VALUES (?,?,?)
+               ON CONFLICT(key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at""",
+            (key, json.dumps(payload), _now()),
+        )

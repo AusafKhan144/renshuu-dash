@@ -1,16 +1,17 @@
 import { useEffect } from "react";
 import { toast } from "sonner";
-import { useOverview, useSchedules, useSpotlight } from "../api/client";
+import { useOverview, usePace, useSchedules, useSpotlight } from "../api/client";
 import { AchievementsShelf } from "../components/AchievementsShelf";
 import { ActivityHeatmap } from "../components/ActivityHeatmap";
 import { DailyGoalRing } from "../components/DailyGoalRing";
-import { ForecastCard } from "../components/ForecastCard";
 import { InsightsCard } from "../components/InsightsCard";
 import { JLPTCoverage } from "../components/JLPTCoverage";
 import { JLPTLevelCheck } from "../components/JLPTLevelCheck";
+import { KaoCard } from "../components/KaoCard";
 import { LevelCard } from "../components/LevelCard";
 import { N5Progress } from "../components/N5Progress";
 import { OverviewCards } from "../components/OverviewCards";
+import { PaceCard } from "../components/PaceCard";
 import { QuickLookup } from "../components/QuickLookup";
 import { ScheduleCards } from "../components/ScheduleCards";
 import { TodaysFocus } from "../components/TodaysFocus";
@@ -21,6 +22,7 @@ export function DashboardPage() {
   const overview = useOverview(true);
   const schedules = useSchedules(true);
   const spotlight = useSpotlight(true);
+  const pace = usePace(true);
 
   useEffect(() => {
     const due = schedules.data?.total_review_due ?? 0;
@@ -31,6 +33,8 @@ export function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {ov && <KaoCard data={ov} />}
+
       {ov && (
         <div className="mb-1">
           <div className="text-[11px] text-fg-faint">
@@ -70,7 +74,7 @@ export function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <TrendCard enabled={true} />
-        {schedules.data && <ForecastCard data={schedules.data} />}
+        {pace.data && <PaceCard data={pace.data} />}
       </div>
 
       <ActivityHeatmap enabled={true} />

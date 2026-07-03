@@ -13,11 +13,13 @@ import logging
 
 from apscheduler.schedulers.background import BackgroundScheduler
 
+import analytics
 import db
 import gamification
 import notifier
 import settings
-from config import PROFILE_SNAPSHOT_HOUR, SCHEDULE_POLL_MINUTES
+import term_sync
+from config import DIGEST_HOUR, PROFILE_SNAPSHOT_HOUR, SCHEDULE_POLL_MINUTES, STREAK_CHECK_HOUR, TERM_SYNC_HOUR
 from renshuu_client import get_kana_mastery, get_profile, get_schedule_terms, get_schedules
 
 log = logging.getLogger("renshu.poller")
@@ -35,6 +37,11 @@ def poll_schedules(notify: bool = True):
         return None
     schedules = get_schedules(api_key)
     db.insert_schedule_snapshots(schedules)
+    # Free: /schedule already carries each schedule's upcoming-review forecast.
+    for s in schedules:
+        upcoming = s.get("upcoming") or []
+        if upcoming:
+            db.insert_schedule_upcoming(str(s.get("id")), upcoming)
 
     due = [
         {"name": s.get("name"), "review_due": int((s.get("today") or {}).get("review", 0) or 0)}
@@ -130,6 +137,63 @@ def snapshot_spotlight():
     log.info("Captured %d spotlight words", min(len(picks), SPOTLIGHT_COUNT))
 
 
+def term_sync_job():
+    """Full per-term sync (Phase 1). Resumable and budget-aware — safe to call
+    hourly as a no-op once the day's sync has completed."""
+    try:
+        result = term_sync.run_sync()
+        log.info("Term sync job: %s", result)
+        return result
+    except Exception as e:  # noqa: BLE001 - best-effort, never break the scheduler
+        log.warning("Term sync job failed: %s", e)
+        return None
+
+
+def daily_digest():
+    """Morning coaching push: reviews due, leeches, weak spots, streak, pace —
+    framed as a note from Kao. Runs after the nightly sync/snapshots so the
+    numbers it quotes are fresh."""
+    api_key = settings.get_api_key()
+    if not api_key or not settings.digest_enabled():
+        return None
+    if db.notified_today("digest"):
+        return None
+
+    reviews_due = db.latest_total_review_due()
+    leeches = analytics.leeches(limit=1000)
+    vectors = analytics.vector_accuracy()
+    weakest = vectors[0]["name"] if vectors else None
+    stats = gamification.current_stats()
+    streak_current = int(stats.get("streak_current") or 0)
+
+    nearest_eta = analytics.nearest_pace_eta()
+
+    ok = notifier.send_daily_digest(reviews_due, len(leeches), weakest, streak_current, nearest_eta)
+    log.info("Sent daily digest: %s", ok)
+    return {"sent": ok}
+
+
+def streak_risk_check():
+    """One live /profile call in the evening: if nothing's been studied today
+    and a streak is active, nudge before it breaks."""
+    api_key = settings.get_api_key()
+    if not api_key or not settings.streak_check_enabled():
+        return None
+    if db.notified_today("streak_risk"):
+        return None
+
+    profile = get_profile(api_key)
+    today_all = int((profile.get("studied") or {}).get("today_all") or 0)
+    stats = gamification.current_stats()
+    streak_current = int(stats.get("streak_current") or 0)
+
+    if today_all == 0 and streak_current > 0:
+        ok = notifier.send_streak_risk(streak_current)
+        log.info("Sent streak-risk nudge: %s", ok)
+        return {"sent": ok}
+    return {"sent": False}
+
+
 def seed_initial_snapshots():
     """On first successful setup, capture a baseline so day 1 isn't blank."""
     try:
@@ -137,6 +201,7 @@ def seed_initial_snapshots():
         poll_schedules(notify=False)
         snapshot_kana_mastery()
         snapshot_spotlight()
+        term_sync_job()
     except Exception as e:  # noqa: BLE001 - best-effort seeding
         log.warning("Initial snapshot seeding failed: %s", e)
 
@@ -162,11 +227,28 @@ def start_scheduler():
         snapshot_spotlight, "cron", hour=PROFILE_SNAPSHOT_HOUR, minute=10,
         id="snapshot_spotlight",
     )
+    sched.add_job(
+        term_sync_job, "cron", hour=TERM_SYNC_HOUR, minute=30,
+        id="term_sync",
+    )
+    sched.add_job(
+        term_sync_job, "interval", minutes=SCHEDULE_POLL_MINUTES,
+        id="term_sync_resume",
+    )
+    sched.add_job(
+        daily_digest, "cron", hour=DIGEST_HOUR, minute=0,
+        id="daily_digest",
+    )
+    sched.add_job(
+        streak_risk_check, "cron", hour=STREAK_CHECK_HOUR, minute=0,
+        id="streak_risk_check",
+    )
     sched.start()
     _scheduler = sched
     log.info(
-        "Poller started: schedules every %s min, profile daily at %02d:00 UTC",
-        SCHEDULE_POLL_MINUTES, PROFILE_SNAPSHOT_HOUR,
+        "Poller started: schedules every %s min, profile daily at %02d:00 UTC, "
+        "term sync daily at %02d:30 UTC, digest at %02d:00 UTC, streak check at %02d:00 UTC",
+        SCHEDULE_POLL_MINUTES, PROFILE_SNAPSHOT_HOUR, TERM_SYNC_HOUR, DIGEST_HOUR, STREAK_CHECK_HOUR,
     )
     return sched
 

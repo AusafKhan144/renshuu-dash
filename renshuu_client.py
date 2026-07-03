@@ -265,6 +265,39 @@ def search_grammar(api_key: str, query: str, page: int = 1):
     return resp.json(), None
 
 
+def get_all_terms_page(api_key: str, termtype: str, page: int = 1):
+    """One page of every term of `termtype` the user has ever studied: `(data, error)`.
+
+    Confirmed live: `GET /list/all/{termtype}?pg=N` -> {contents: {pg, total_pg,
+    result_count, terms}}, each term carrying `user_data` (mastery %, correct/
+    missed counts, per-study-mode `study_vectors`). `termtype` is one of
+    vocab/kanji/grammar/sent.
+    """
+    resp = _request("GET", f"/list/all/{termtype}", api_key, params={"pg": page})
+    if resp.status_code != 200:
+        return None, f"HTTP {resp.status_code}"
+    return resp.json(), None
+
+
+def get_reibun(api_key: str, word_id: str | None = None, value: str | None = None):
+    """Example sentences for a word (by id) or free-text search: `(data, error)`."""
+    if word_id:
+        resp = _request("GET", f"/reibun/search/{word_id}", api_key)
+    else:
+        resp = _request("GET", "/reibun/search", api_key, params={"value": value or ""})
+    if resp.status_code != 200:
+        return None, f"HTTP {resp.status_code}"
+    return resp.json(), None
+
+
+def get_grammar_detail(api_key: str, grammar_id: str):
+    """Full grammar point detail (construct image, model sentences): `(data, error)`."""
+    resp = _request("GET", f"/grammar/{grammar_id}", api_key)
+    if resp.status_code != 200:
+        return None, f"HTTP {resp.status_code}"
+    return resp.json(), None
+
+
 def remove_word_from_list(api_key: str, word_id: str, list_id: str):
     """Remove a word from a list. Returns `(ok, status_or_error)`."""
     resp = _request(

@@ -23,6 +23,8 @@ ACCOUNT_NAME_SETTING = "renshuu_account_name"
 DAILY_GOAL_SETTING = "daily_goal"
 DEFAULT_DAILY_GOAL = 30
 KANA_SCHEDULE_IDS_SETTING = "kana_schedule_ids"
+DIGEST_ENABLED_SETTING = "digest_enabled"
+STREAK_CHECK_ENABLED_SETTING = "streak_check_enabled"
 
 
 def bootstrap_from_env():
@@ -71,6 +73,29 @@ def account_summary():
     if not is_configured():
         return None
     return {"name": db.get_setting(ACCOUNT_NAME_SETTING)}
+
+
+def _get_bool(key: str, default: bool) -> bool:
+    raw = db.get_setting(key)
+    if raw is None:
+        return default
+    return raw == "1"
+
+
+def digest_enabled() -> bool:
+    return _get_bool(DIGEST_ENABLED_SETTING, True)
+
+
+def set_digest_enabled(on: bool):
+    db.set_setting(DIGEST_ENABLED_SETTING, "1" if on else "0")
+
+
+def streak_check_enabled() -> bool:
+    return _get_bool(STREAK_CHECK_ENABLED_SETTING, True)
+
+
+def set_streak_check_enabled(on: bool):
+    db.set_setting(STREAK_CHECK_ENABLED_SETTING, "1" if on else "0")
 
 
 def get_kana_schedule_ids():

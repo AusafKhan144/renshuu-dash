@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import analytics  # noqa: E402
 import auth  # noqa: E402
 import db  # noqa: E402
 import gamification  # noqa: E402
@@ -27,11 +28,14 @@ import notifier  # noqa: E402
 import poller  # noqa: E402
 import push  # noqa: E402
 import settings  # noqa: E402
+import term_sync  # noqa: E402
 from config import DEV_ORIGINS, FRONTEND_DIST  # noqa: E402
 from renshuu_client import (  # noqa: E402
     add_word_to_list,
+    get_grammar_detail,
     get_list_words,
     get_lists,
+    get_reibun,
     get_schedules,
     remove_word_from_list,
     search_grammar,
@@ -146,6 +150,8 @@ def setup_status():
         "push_enabled": push.enabled(),
         "daily_goal": settings.get_daily_goal(),
         "account": settings.account_summary(),
+        "digest_enabled": settings.digest_enabled(),
+        "streak_check_enabled": settings.streak_check_enabled(),
     }
 
 
@@ -170,6 +176,22 @@ def setup_key(body: KeyIn):
 def setup_daily_goal(body: DailyGoalIn):
     settings.set_daily_goal(body.goal)
     return {"ok": True, "daily_goal": settings.get_daily_goal()}
+
+
+class ToggleIn(BaseModel):
+    on: bool
+
+
+@api.post("/setup/digest")
+def setup_digest_toggle(body: ToggleIn):
+    settings.set_digest_enabled(body.on)
+    return {"ok": True, "digest_enabled": settings.digest_enabled()}
+
+
+@api.post("/setup/streak-check")
+def setup_streak_check_toggle(body: ToggleIn):
+    settings.set_streak_check_enabled(body.on)
+    return {"ok": True, "streak_check_enabled": settings.streak_check_enabled()}
 
 
 # --- push notifications ---------------------------------------------------
@@ -233,6 +255,7 @@ def overview():
     xp = gamification.compute_xp(stats)
     level = gamification.level_info(xp)
     daily_goal = settings.get_daily_goal()
+    analytics_summary = _analytics_summary()
 
     return {
         "account_name": (settings.account_summary() or {}).get("name"),
@@ -255,11 +278,29 @@ def overview():
         "level": level["level"],
         "level_title": level["title"],
         "adventure_level": latest.get("adventure_level"),
+        "kao_url": latest.get("kao_url"),
         "xp": level["xp"],
         "daily": {"goal": daily_goal, "progress": db.learned_today(), "reviews_due": reviews_due},
-        "insights": gamification.build_insights(stats, reviews_due),
+        "insights": gamification.build_insights(stats, reviews_due, analytics_summary),
         "as_of": latest.get("ts"),
     }
+
+
+def _analytics_summary() -> dict:
+    """Best-effort synced-term analytics for the insights feed — returns {} if
+    no terms have been synced yet, so /api/overview never depends on it."""
+    try:
+        leeches = analytics.leeches(limit=1000)
+        vectors = analytics.vector_accuracy()
+        risk = analytics.forgetting_risk()
+        return {
+            "leech_count": len(leeches),
+            "weakest_vector": vectors[0]["name"] if vectors else None,
+            "overdue_count": risk["overdue_count"],
+            "nearest_eta": analytics.nearest_pace_eta(),
+        }
+    except Exception:  # noqa: BLE001 - insights are best-effort, never break overview
+        return {}
 
 
 @api.get("/achievements")
@@ -482,6 +523,179 @@ def refresh():
     poller.snapshot_spotlight()
     _schedules_cache["data"] = None  # invalidate cache
     return {"ok": True, "schedules": result}
+
+
+@api.get("/analytics/retention")
+def analytics_retention():
+    _require_configured()
+    return analytics.retention()
+
+
+@api.get("/analytics/vectors")
+def analytics_vectors(termtype: str | None = None):
+    _require_configured()
+    return {"vectors": analytics.vector_accuracy(termtype)}
+
+
+@api.get("/analytics/leeches")
+def analytics_leeches(termtype: str | None = None, limit: int = 20):
+    _require_configured()
+    return {"leeches": analytics.leeches(termtype, limit)}
+
+
+@api.get("/analytics/risk")
+def analytics_risk(days: int = 7):
+    _require_configured()
+    return analytics.forgetting_risk(days)
+
+
+@api.get("/analytics/jlpt")
+def analytics_jlpt():
+    _require_configured()
+    return analytics.jlpt_breakdown()
+
+
+@api.get("/analytics/pace")
+def analytics_pace():
+    _require_configured()
+    return {"per_termtype": analytics.pace_forecast()}
+
+
+@api.get("/analytics/workload")
+def analytics_workload(days: int = 14):
+    _require_configured()
+    return {"days": days, "points": analytics.workload(days)}
+
+
+@api.get("/history/jlpt")
+def history_jlpt(level: str = "n5", cat: str = "vocab", days: int = 90):
+    _require_configured()
+    return {"cat": cat, "level": level, "days": days, "points": db.jlpt_history(cat, level, days)}
+
+
+@api.get("/grammar/{grammar_id}")
+def grammar_detail(grammar_id: str):
+    """Live grammar-point detail (construct image, model sentences), cached
+    30 days — this is a live Renshuu call the first time, free thereafter."""
+    _require_configured()
+    key = f"grammar:{grammar_id}"
+    cached = db.cache_get(key, ttl_days=30)
+    if cached is not None:
+        return cached
+    data, err = get_grammar_detail(settings.get_api_key(), grammar_id)
+    if err:
+        raise HTTPException(status_code=502, detail=f"Renshuu grammar lookup failed: {err}")
+    db.cache_put(key, data)
+    return data
+
+
+@api.get("/sentences")
+def sentences(word_id: str | None = None, q: str | None = None):
+    """Live example-sentence lookup by word id or free text, cached 30 days."""
+    _require_configured()
+    if not word_id and not q:
+        raise HTTPException(status_code=400, detail="word_id or q is required.")
+    key = f"reibun:word:{word_id}" if word_id else f"reibun:q:{q}"
+    cached = db.cache_get(key, ttl_days=30)
+    if cached is not None:
+        return cached
+    data, err = get_reibun(settings.get_api_key(), word_id=word_id, value=q)
+    if err:
+        raise HTTPException(status_code=502, detail=f"Renshuu example-sentence lookup failed: {err}")
+    db.cache_put(key, data)
+    return data
+
+
+@api.get("/terms")
+def terms_index(
+    termtype: str | None = None,
+    jlpt: str | None = None,
+    sort: Literal["mastery", "missed", "recent", "display"] = "mastery",
+    q: str | None = None,
+    page: int = 1,
+):
+    """Paged, filterable term list backed entirely by the synced SQLite terms
+    table (no live Renshuu call)."""
+    _require_configured()
+    rows = db.latest_term_mastery(termtype)
+    if jlpt:
+        rows = [r for r in rows if (r.get("jlpt") or "").lower() == jlpt.lower()]
+    if q:
+        needle = q.strip().lower()
+        rows = [
+            r for r in rows
+            if needle in (r.get("display") or "").lower()
+            or needle in (r.get("reading") or "").lower()
+            or needle in (r.get("definition") or "").lower()
+        ]
+
+    if sort == "mastery":
+        rows.sort(key=lambda r: r.get("mastery") or 0)
+    elif sort == "missed":
+        rows.sort(key=lambda r: r.get("missed") or 0, reverse=True)
+    elif sort == "recent":
+        rows.sort(key=lambda r: r.get("day") or "", reverse=True)
+    else:
+        rows.sort(key=lambda r: r.get("display") or "")
+
+    per_page = 50
+    total = len(rows)
+    start = (max(1, page) - 1) * per_page
+    page_rows = rows[start:start + per_page]
+
+    return {
+        "page": page,
+        "total_pages": max(1, (total + per_page - 1) // per_page),
+        "total": total,
+        "terms": [
+            {
+                "termtype": r["termtype"], "term_id": r["term_id"], "display": r["display"],
+                "reading": r["reading"], "definition": r["definition"], "jlpt": r["jlpt"],
+                "mastery": r.get("mastery") or 0, "correct": r.get("correct") or 0,
+                "missed": r.get("missed") or 0,
+            }
+            for r in page_rows
+        ],
+    }
+
+
+@api.get("/terms/{termtype}/{term_id}")
+def term_detail(termtype: str, term_id: str):
+    _require_configured()
+    row = db.get_term(termtype, term_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Term not found.")
+    return {
+        "termtype": row["termtype"],
+        "term_id": row["term_id"],
+        "display": row["display"],
+        "reading": row["reading"],
+        "definition": row["definition"],
+        "jlpt": row["jlpt"],
+        "mastery": row.get("mastery") or 0,
+        "correct": row.get("correct") or 0,
+        "missed": row.get("missed") or 0,
+        "vectors": row.get("vectors") or {},
+        "payload": row.get("payload") or {},
+        "history": db.term_mastery_history(termtype, term_id),
+    }
+
+
+@api.post("/sync/terms")
+def sync_terms():
+    """Full per-term sync, run on demand (Settings page button). Resumable:
+    returns complete=False with calls_used if the daily quota ran out mid-sync."""
+    _require_configured()
+    result = term_sync.run_sync()
+    return result
+
+
+@api.get("/kao/history")
+def kao_history():
+    """Kao's growth timeline: distinct mascot images captured across daily
+    profile snapshots, each with the date and adventure level it first appeared."""
+    _require_configured()
+    return {"history": db.kao_history()}
 
 
 def _json(s):

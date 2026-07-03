@@ -160,6 +160,59 @@ export function BarChart({
   );
 }
 
+/** Multi-series line chart (no fill), reusing the AreaSparkline point math so
+    every series shares one x/y scale. Each series can have its own color. */
+export function LineChart({
+  series,
+  height = 170,
+  showDots = false,
+}: {
+  series: { values: number[]; color: string }[];
+  height?: number;
+  showDots?: boolean;
+}) {
+  const W = 520;
+  const pad = 6;
+  const allValues = series.flatMap((s) => s.values);
+  if (allValues.length < 2) {
+    return (
+      <p className="py-6 text-sm text-fg-faint">
+        Charting starts now — your trend fills in as daily snapshots accumulate.
+      </p>
+    );
+  }
+  const max = Math.max(...allValues);
+  const min = Math.min(...allValues, 0);
+  const range = Math.max(max - min, 1);
+
+  return (
+    <svg viewBox={`0 0 ${W} ${height}`} width="100%" height={height} preserveAspectRatio="none">
+      {series.map((s, i) => {
+        const n = s.values.length;
+        if (n < 2) return null;
+        const stepX = (W - pad * 2) / (n - 1);
+        const pts = s.values.map((v, j) => {
+          const x = pad + j * stepX;
+          const y = pad + (1 - (v - min) / range) * (height - pad * 2);
+          return [x, y] as const;
+        });
+        const line = pts
+          .map((p, j) => (j === 0 ? "M" : "L") + p[0].toFixed(1) + " " + p[1].toFixed(1))
+          .join(" ");
+        return (
+          <g key={i}>
+            <path d={line} fill="none" stroke={s.color} strokeWidth={2.25} />
+            {showDots &&
+              pts.map((p, j) => (
+                <circle key={j} cx={p[0]} cy={p[1]} r={2.25} fill={s.color} />
+              ))}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
 export function Heatmap({
   values,
   cell = 11,

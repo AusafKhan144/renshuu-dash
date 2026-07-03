@@ -23,6 +23,15 @@ FRONTEND_DIST = os.environ.get(
 SCHEDULE_POLL_MINUTES = int(os.environ.get("RENSHU_SCHEDULE_POLL_MINUTES", "60"))
 PROFILE_SNAPSHOT_HOUR = int(os.environ.get("RENSHU_PROFILE_SNAPSHOT_HOUR", "6"))
 
+# Full per-term sync (Phase 1): runs before the 06:00 snapshots, resumes hourly
+# if it ran out of daily quota. Reserve keeps headroom for hourly polls/lookups.
+TERM_SYNC_HOUR = int(os.environ.get("RENSHU_TERM_SYNC_HOUR", "5"))
+SYNC_RESERVE = int(os.environ.get("RENSHU_SYNC_RESERVE", "100"))
+
+# Daily coaching digest + evening streak-risk check (Phase 4).
+DIGEST_HOUR = int(os.environ.get("RENSHU_DIGEST_HOUR", "7"))
+STREAK_CHECK_HOUR = int(os.environ.get("RENSHU_STREAK_CHECK_HOUR", "12"))
+
 # CORS origins allowed in dev (Vite dev server).
 DEV_ORIGINS = os.environ.get(
     "RENSHU_DEV_ORIGINS",

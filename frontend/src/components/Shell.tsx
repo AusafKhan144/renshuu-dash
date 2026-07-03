@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Loader2, Moon, RefreshCw, Settings as SettingsIcon, Sun } from "lucide-react";
 import { api, useOverview, useUsage } from "../api/client";
 import { DashboardPage } from "../pages/DashboardPage";
+import { InsightsPage } from "../pages/InsightsPage";
 import { KanaPage } from "../pages/KanaPage";
 import { ListsPage } from "../pages/ListsPage";
 import { SettingsPage } from "../pages/SettingsPage";
@@ -12,7 +13,7 @@ import type { Theme } from "../theme";
 import { BottomNav } from "./BottomNav";
 import { Sidebar, type Page } from "./Sidebar";
 
-const PAGES: Page[] = ["dashboard", "kana", "lists", "settings"];
+const PAGES: Page[] = ["dashboard", "kana", "insights", "lists", "settings"];
 
 function pageFromHash(): Page {
   const h = window.location.hash.replace("#", "") as Page;
@@ -70,6 +71,7 @@ export function Shell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: (
         />
       ) : (
         <TopBar
+          kaoUrl={overview.data?.kao_url ?? null}
           onSettings={() => setPage("settings")}
           onRefresh={() => setConfirmOpen(true)}
           theme={theme}
@@ -81,6 +83,7 @@ export function Shell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: (
         <div className="mx-auto max-w-[1180px] px-4 py-6 sm:py-8">
           {page === "dashboard" && <DashboardPage />}
           {page === "kana" && <KanaPage />}
+          {page === "insights" && <InsightsPage />}
           {page === "lists" && <ListsPage />}
           {page === "settings" && <SettingsPage />}
         </div>
@@ -101,11 +104,13 @@ export function Shell({ theme, onToggleTheme }: { theme: Theme; onToggleTheme: (
 }
 
 function TopBar({
+  kaoUrl,
   onSettings,
   onRefresh,
   theme,
   onToggleTheme,
 }: {
+  kaoUrl: string | null;
   onSettings: () => void;
   onRefresh: () => void;
   theme: Theme;
@@ -113,7 +118,12 @@ function TopBar({
 }) {
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between border-b border-card-border bg-surface px-4 py-3">
-      <span className="font-display text-[19px] font-bold leading-none">Renshu</span>
+      <div className="flex items-center gap-2">
+        <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-inset text-[13px]">
+          {kaoUrl ? <img src={kaoUrl} alt="Kao" className="h-full w-full object-cover" /> : <span>🙂</span>}
+        </div>
+        <span className="font-display text-[19px] font-bold leading-none">Renshu</span>
+      </div>
       <div className="flex items-center gap-2">
         <button
           onClick={onToggleTheme}

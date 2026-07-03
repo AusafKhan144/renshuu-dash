@@ -30,3 +30,34 @@ def send_review_reminder(total_due: int, schedules: list) -> bool:
         REVIEW_URL,
         kind="review",
     )
+
+
+def send_daily_digest(
+    reviews_due: int,
+    leech_count: int,
+    weakest_vector: str | None,
+    streak_current: int,
+    nearest_eta: tuple[str, str] | None,
+) -> bool:
+    """A wholesome morning coaching digest, framed as a note from Kao."""
+    lines = []
+    if reviews_due > 0:
+        lines.append(f"{reviews_due} reviews are waiting")
+    if leech_count:
+        lines.append(f"{leech_count} leech{'es' if leech_count != 1 else ''} to squash")
+    if weakest_vector:
+        lines.append(f"{weakest_vector} is your weak spot lately")
+    if streak_current > 0:
+        lines.append(f"{streak_current}-day streak going strong")
+    if nearest_eta:
+        level, eta = nearest_eta
+        lines.append(f"{level.upper()} on pace for {eta}")
+
+    body = "Kao says: " + " · ".join(lines) if lines else "Kao says: all caught up — enjoy a well-earned break!"
+    return push.send_push("🍵 Your Renshu morning digest", body, REVIEW_URL, kind="digest")
+
+
+def send_streak_risk(streak_current: int) -> bool:
+    """A gentle nudge, framed as Kao missing you rather than a warning."""
+    body = f"Kao misses you! Your {streak_current}-day streak is waiting — a few minutes today keeps it alive."
+    return push.send_push("🥺 Kao is missing you", body, REVIEW_URL, kind="streak_risk")
